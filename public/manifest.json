@@ -1,21 +1,23 @@
 {
-  "name": "Encode.Core - Preset Studio",
+  "name": "Encode.Core — Private media conversion",
   "short_name": "Encode.Core",
-  "description": "Elite browser-based media transcoder utilizing WebAssembly & hardware acceleration.",
+  "description": "Private browser-native video and audio conversion with offline support.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0F1115",
   "theme_color": "#0F1115",
   "icons": [
     {
-      "src": "https://picsum.photos/seed/encode/192/192",
+      "src": "/icon-192.svg",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     },
     {
-      "src": "https://picsum.photos/seed/encode/512/512",
+      "src": "/icon-512.svg",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

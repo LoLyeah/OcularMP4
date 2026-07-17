@@ -1,10 +1,13 @@
-const CACHE_NAME = 'encode-core-v2';
-const RUNTIME_CACHE = 'encode-core-runtime';
+const APP_VERSION = '0.2.0';
+const CACHE_NAME = `ocularmp4-app-v${APP_VERSION}`;
+const RUNTIME_CACHE = `ocularmp4-runtime-v${APP_VERSION}`;
 
 // Static assets to precache on install
 const PRECACHE_ASSETS = [
   '/',
-  '/manifest.json'
+  '/manifest.json',
+  '/icon-192.svg',
+  '/icon-512.svg'
 ];
 
 self.addEventListener('install', (event) => {

@@ -1,20 +1,38 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Encode.Core
 
-# Run and deploy your AI Studio app
+Encode.Core is a private, browser-native video and audio converter. Files can be
+trimmed and transcoded locally with native browser APIs or FFmpeg.wasm, with
+custom presets stored on the device. The interface is available in English and
+Bahasa Indonesia.
 
-This contains everything you need to run your app locally.
+## Requirements
 
-View your app in AI Studio: https://ai.studio/apps/be993a4f-f83c-4a6f-b029-7c9fe0a938cb
+- Node.js 24
+- npm 11
+- Optional `GEMINI_API_KEY` for AI preset generation
 
-## Run Locally
+## Run locally
 
-**Prerequisites:**  Node.js
+```bash
+npm ci
+npm run dev
+```
 
+Open `http://localhost:3000`.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Validate a release
+
+```bash
+npm run version:check
+npm run validate
+```
+
+`validate` runs linting, TypeScript checks, and a production build. The
+application version is maintained in `package.json`; update the service-worker
+version in `public/sw.js` whenever a release is cut.
+
+## Versioning
+
+Encode.Core follows Semantic Versioning. Use Conventional Commit messages and
+tag releases as `vX.Y.Z`. Local settings and custom presets use independent
+schema versions so future releases can migrate saved data safely.

@@ -13,13 +13,15 @@ const ai = new GoogleGenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    const { prompt } = await req.json();
+    const { prompt, locale = "en" } = await req.json();
 
     if (!prompt) {
       return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
     }
 
+    const outputLanguage = locale === "id" ? "Bahasa Indonesia" : "English";
     const systemInstruction = `You are a professional video transcoding expert and FFmpeg command engineer.
+Return the human-readable name and description in ${outputLanguage}. Keep codec names, file formats, and FFmpeg flags in their standard technical form.
 Your task is to translate a user's natural language request (e.g. "compress for discord under 8mb", "make a high quality fast action webm", "convert to high quality vertical 60fps clip") into a structured video encoding preset.
 
 You must return a JSON object with the following fields:
