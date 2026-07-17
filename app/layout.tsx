@@ -15,6 +15,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: 'Video Encoder & Preset Studio',
   description: 'AI-assisted, hardware-accelerated, browser-based video transcoding with custom presets.',
+  manifest: '/manifest.json',
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {

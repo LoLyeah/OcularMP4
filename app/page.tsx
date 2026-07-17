@@ -6,7 +6,8 @@ import {
   Video, Wand2, Cpu, Layers, Settings, Play, Pause, Download, 
   Upload, Plus, Trash2, RotateCw, FileVideo, CheckCircle2, 
   AlertCircle, Scissors, Volume2, VolumeX, Sparkles, Clock, 
-  Music, ExternalLink, HelpCircle, ArrowRight, ChevronRight, Check
+  Music, ExternalLink, HelpCircle, ArrowRight, ChevronRight, Check,
+  Search, X
 } from 'lucide-react';
 
 // TS Definitions for Presets
@@ -133,6 +134,7 @@ const DEFAULT_PRESETS: Preset[] = [
 export default function PresetStudio() {
   // Navigation / Tab state (inside single-view design)
   const [activePresetCategory, setActivePresetCategory] = useState<'all' | 'compatible' | 'size' | 'hq' | 'audio' | 'gif' | 'custom'>('all');
+  const [presetSearchQuery, setPresetSearchQuery] = useState<string>('');
   
   // File states
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -183,6 +185,8 @@ export default function PresetStudio() {
   const [transcodedFileName, setTranscodedFileName] = useState<string>('');
   const [transcodedFileSize, setTranscodedFileSize] = useState<string>('');
   const [transcodeTimeTaken, setTranscodeTimeTaken] = useState<number>(0);
+  const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [mounted, setMounted] = useState<boolean>(false);
 
   // HTML Video / Canvas elements reference
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -207,9 +211,42 @@ export default function PresetStudio() {
     setCustomFfmpegArgsStr(preset.ffmpegArgs.join(' '));
   };
 
-  // Load custom presets from LocalStorage
+  const addLog = (message: string) => {
+    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
+  };
+
+  // Load custom presets and configure offline capabilities / service worker
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        setMounted(true);
+        setIsOffline(!navigator.onLine);
+      }, 0);
+
+      const handleOnline = () => {
+        setIsOffline(false);
+        addLog('[System] Internet connection detected. Cloud CDN module is ready to cache on usage.');
+      };
+
+      const handleOffline = () => {
+        setIsOffline(true);
+        addLog('[System] Browser operates offline. All transcoding, filtering, and presets compile 100% locally.');
+      };
+
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+
+      // Register custom offline Service Worker
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js')
+          .then(() => {
+            addLog('[System] Service Worker configured successfully. Offline caching enabled.');
+          })
+          .catch((err) => {
+            console.error('Service Worker registration failure:', err);
+          });
+      }
+
       const stored = localStorage.getItem('video_preset_studio_custom');
       if (stored) {
         try {
@@ -221,6 +258,11 @@ export default function PresetStudio() {
           console.error('Failed to parse stored presets', e);
         }
       }
+
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      };
     }
   }, []);
 
@@ -232,10 +274,6 @@ export default function PresetStudio() {
     setPresets([...DEFAULT_PRESETS, ...updatedCustom]);
     selectPreset(newPreset);
     addLog(`[Preset] Saved new custom preset "${newPreset.name}" successfully.`);
-  };
-
-  const addLog = (message: string) => {
-    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
   };
 
   // Setup/Load FFmpeg.wasm Engine
@@ -728,9 +766,30 @@ export default function PresetStudio() {
 
   // Helper filters
   const filteredPresets = presets.filter(p => {
-    if (activePresetCategory === 'all') return true;
-    return p.category === activePresetCategory;
+    // 1. Category Filter
+    const matchesCategory = activePresetCategory === 'all' || p.category === activePresetCategory;
+    if (!matchesCategory) return false;
+
+    // 2. Search Query Filter
+    if (!presetSearchQuery.trim()) return true;
+    const query = presetSearchQuery.toLowerCase().trim();
+    return (
+      p.name.toLowerCase().includes(query) ||
+      p.description.toLowerCase().includes(query) ||
+      p.category.toLowerCase().includes(query)
+    );
   });
+
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-[#0F1115] text-slate-100 flex items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-4 border-sky-500/30 border-t-sky-500 rounded-full animate-spin"></div>
+          <p className="text-sm font-semibold tracking-wide text-slate-400">Loading Preset Studio...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 md:py-12" id="studio-root-container">
@@ -750,10 +809,24 @@ export default function PresetStudio() {
 
         {/* Engine Switcher & Status Badges Consolidated */}
         <div className="flex flex-wrap items-center gap-4">
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-[10px] font-mono text-green-400 uppercase tracking-widest">FFmpeg 6.1 loaded</span>
-          </div>
+          {isOffline ? (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full" id="offline-badge">
+              <div className="w-2 h-2 bg-amber-500 rounded-full"></div>
+              <span className="text-[10px] font-mono text-amber-400 uppercase tracking-widest">Offline Sandbox</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-sky-500/10 border border-sky-500/20 rounded-full" id="offline-badge" title="Service Worker caching enabled for offline use.">
+              <div className="w-2 h-2 bg-sky-500 rounded-full animate-pulse"></div>
+              <span className="text-[10px] font-mono text-sky-400 uppercase tracking-widest">Offline Ready</span>
+            </div>
+          )}
+
+          {ffmpegLoaded && (
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/20 rounded-full">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-[10px] font-mono text-green-400 uppercase tracking-widest">FFmpeg Compiler loaded</span>
+            </div>
+          )}
 
           <div className="bg-[#0F1115] p-1 rounded-xl border border-[#2A2E35] flex gap-1" id="engine-selector">
             <button 
@@ -1135,6 +1208,27 @@ export default function PresetStudio() {
               </div>
             </div>
 
+            {/* Search input for real-time filtering */}
+            <div className="relative" id="preset-search-wrapper">
+              <Search className="absolute left-3.5 top-3 h-4 w-4 text-slate-500" />
+              <input 
+                type="text"
+                placeholder="Search presets by name, description, category..."
+                value={presetSearchQuery}
+                onChange={(e) => setPresetSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-9 py-2.5 bg-[#0F1115] border border-[#2A2E35] hover:border-slate-700 focus:border-sky-500/60 focus:ring-1 focus:ring-sky-500/20 text-xs text-slate-200 placeholder-slate-500 rounded-2xl outline-none transition-all duration-300"
+              />
+              {presetSearchQuery && (
+                <button 
+                  onClick={() => setPresetSearchQuery('')}
+                  title="Clear search query"
+                  className="absolute right-3.5 top-3 p-0.5 rounded-full hover:bg-slate-800 text-slate-500 hover:text-slate-300 transition-all duration-200 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
             {/* Premium scrollable filters */}
             <div className="flex flex-wrap gap-1.5 pb-2" id="preset-filters">
               {(['all', 'compatible', 'size', 'hq', 'audio', 'gif', 'custom'] as const).map((cat) => (
@@ -1150,45 +1244,53 @@ export default function PresetStudio() {
 
             {/* List of presets with high visual styling */}
             <div className="flex flex-col gap-2 max-h-[320px] overflow-y-auto pr-1 scrollbar-thin" id="presets-list">
-              {filteredPresets.map((preset) => {
-                const isActive = activePreset.id === preset.id;
-                return (
-                  <div 
-                    key={preset.id}
-                    onClick={() => selectPreset(preset)}
-                    className={`p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer flex flex-col justify-between relative group ${isActive ? 'bg-sky-950/20 border-sky-500/60 shadow-lg shadow-sky-950/10' : 'bg-[#0F1115]/40 border-[#2A2E35] hover:border-slate-700 hover:bg-[#0F1115]/80'}`}
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-1.5">
-                      <h3 className={`text-xs font-bold transition-colors duration-300 ${isActive ? 'text-sky-300' : 'text-slate-300 group-hover:text-slate-200'} truncate max-w-[180px] sm:max-w-[240px]`}>
-                        {preset.name}
-                      </h3>
-                      <div className="flex items-center gap-1.5">
-                        {!DEFAULT_PRESETS.some(dp => dp.id === preset.id) && (
-                          <button 
-                            onClick={(e) => handleDeletePreset(preset.id, e)}
-                            title="Delete custom preset"
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors duration-200 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        {isActive && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+              {filteredPresets.length === 0 ? (
+                <div className="p-8 text-center bg-[#0F1115]/20 border border-[#2A2E35]/60 border-dashed rounded-2xl flex flex-col items-center justify-center gap-2">
+                  <Search className="w-6 h-6 text-slate-600 animate-pulse" />
+                  <p className="text-xs font-semibold text-slate-400">No matching presets found</p>
+                  <p className="text-[10px] text-slate-500 max-w-[200px] mx-auto">Try adjusting your search terms or explore other blueprint categories above.</p>
+                </div>
+              ) : (
+                filteredPresets.map((preset) => {
+                  const isActive = activePreset.id === preset.id;
+                  return (
+                    <div 
+                      key={preset.id}
+                      onClick={() => selectPreset(preset)}
+                      className={`p-3.5 rounded-2xl border transition-all duration-300 cursor-pointer flex flex-col justify-between relative group ${isActive ? 'bg-sky-950/20 border-sky-500/60 shadow-lg shadow-sky-950/10' : 'bg-[#0F1115]/40 border-[#2A2E35] hover:border-slate-700 hover:bg-[#0F1115]/80'}`}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-1.5">
+                        <h3 className={`text-xs font-bold transition-colors duration-300 ${isActive ? 'text-sky-300' : 'text-slate-300 group-hover:text-slate-200'} truncate max-w-[180px] sm:max-w-[240px]`}>
+                          {preset.name}
+                        </h3>
+                        <div className="flex items-center gap-1.5">
+                          {!DEFAULT_PRESETS.some(dp => dp.id === preset.id) && (
+                            <button 
+                              onClick={(e) => handleDeletePreset(preset.id, e)}
+                              title="Delete custom preset"
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors duration-200 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {isActive && <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />}
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
+                        {preset.description}
+                      </p>
+                      <div className="flex items-center gap-2 mt-3 text-[10px]">
+                        <span className="bg-[#0F1115] text-slate-400 font-mono px-2 py-0.5 rounded-md border border-[#2A2E35] font-bold uppercase tracking-wide">
+                          {preset.settings.format}
+                        </span>
+                        <span className="text-slate-500 font-mono">
+                          {preset.settings.resolution} @ {preset.settings.fps}fps
+                        </span>
                       </div>
                     </div>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed">
-                      {preset.description}
-                    </p>
-                    <div className="flex items-center gap-2 mt-3 text-[10px]">
-                      <span className="bg-[#0F1115] text-slate-400 font-mono px-2 py-0.5 rounded-md border border-[#2A2E35] font-bold uppercase tracking-wide">
-                        {preset.settings.format}
-                      </span>
-                      <span className="text-slate-500 font-mono">
-                        {preset.settings.resolution} @ {preset.settings.fps}fps
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </section>
 

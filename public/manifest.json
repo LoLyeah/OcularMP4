@@ -1,0 +1,21 @@
+{
+  "name": "Encode.Core - Preset Studio",
+  "short_name": "Encode.Core",
+  "description": "Elite browser-based media transcoder utilizing WebAssembly & hardware acceleration.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0F1115",
+  "theme_color": "#0F1115",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/encode/192/192",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://picsum.photos/seed/encode/512/512",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
