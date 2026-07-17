@@ -1,0 +1,6 @@
+{
+  "name": "Video Encoder & Preset Studio",
+  "description": "An elegant, high-performance web-based video transcoder featuring custom quality presets, AI-powered command generation via Gemini, and hardware-accelerated fallback transcoding.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
