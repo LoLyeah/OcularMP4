@@ -4,5 +4,7 @@ coverage/
 .DS_Store
 *.log
 *.tsbuildinfo
+dist/
+.open-next/
 .env*
 !.env.example
