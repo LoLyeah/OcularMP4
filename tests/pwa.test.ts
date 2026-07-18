@@ -12,7 +12,7 @@ test('PWA manifest exposes a scoped standalone application', async () => {
 
 test('service worker precaches the guide and supports controlled updates', async () => {
   const serviceWorker = await readFile(new URL('../public/sw.js', import.meta.url), 'utf8');
-  assert.match(serviceWorker, /APP_VERSION = '1\.0\.0'/);
+  assert.match(serviceWorker, /APP_VERSION = '1\.1\.0'/);
   assert.match(serviceWorker, /'\/guide'/);
   assert.match(serviceWorker, /SKIP_WAITING/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
