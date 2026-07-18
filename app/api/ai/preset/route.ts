@@ -100,7 +100,7 @@ async function callCompatible(provider: AIProvider, apiKey: string, model: strin
   };
   if (provider === 'openrouter') {
     headers['HTTP-Referer'] = 'https://ocularmp4-studio.openai.site';
-    headers['X-Title'] = 'Encode.Core';
+    headers['X-Title'] = 'OcularMP4';
   }
   const response = await fetch(definition.endpoint, {
     method: 'POST',

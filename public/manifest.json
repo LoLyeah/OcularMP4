@@ -1,6 +1,6 @@
 {
-  "name": "Encode.Core — Private media conversion",
-  "short_name": "Encode.Core",
+  "name": "OcularMP4 — Private media conversion",
+  "short_name": "OcularMP4",
   "description": "Private browser-native video and audio conversion with offline support.",
   "start_url": "/",
   "display": "standalone",

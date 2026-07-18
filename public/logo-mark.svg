@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">OcularMP4 logo</title>
+  <desc id="description">A play symbol inside a luminous eye.</desc>
   <defs>
     <linearGradient id="background" x1="72" y1="56" x2="432" y2="456" gradientUnits="userSpaceOnUse">
       <stop stop-color="#162442"/>
@@ -13,6 +15,10 @@
       <stop stop-color="#22D3EE"/>
       <stop offset="1" stop-color="#6366F1"/>
     </linearGradient>
+    <linearGradient id="play" x1="240" y1="216" x2="304" y2="298" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ECFEFF"/>
+      <stop offset="1" stop-color="#E0E7FF"/>
+    </linearGradient>
     <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(256 256) rotate(90) scale(190)" gradientUnits="userSpaceOnUse">
       <stop stop-color="#67E8F9" stop-opacity=".15"/>
       <stop offset="1" stop-color="#67E8F9" stop-opacity="0"/>
@@ -24,6 +30,6 @@
   <path d="M75 256c42-74 106-111 181-111s139 37 181 111c-42 74-106 111-181 111S117 330 75 256Z" fill="#0D172B" stroke="url(#eye)" stroke-width="34" stroke-linejoin="round"/>
   <circle cx="256" cy="256" r="78" fill="url(#iris)"/>
   <circle cx="256" cy="256" r="54" fill="#0B1020" fill-opacity=".86"/>
-  <path d="M244 218c-9-5-20 1-20 12v52c0 11 11 17 20 12l47-26c9-5 9-19 0-24l-47-26Z" fill="#ECFEFF"/>
+  <path d="M244 218c-9-5-20 1-20 12v52c0 11 11 17 20 12l47-26c9-5 9-19 0-24l-47-26Z" fill="url(#play)"/>
   <circle cx="220" cy="212" r="10" fill="#ECFEFF" fill-opacity=".9"/>
 </svg>

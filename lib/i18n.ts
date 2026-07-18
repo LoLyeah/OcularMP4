@@ -4,7 +4,7 @@ export const DEFAULT_LOCALE: Locale = 'en';
 
 export const translations = {
   en: {
-    appName: 'Encode.Core',
+    appName: 'OcularMP4',
     appTagline: 'Private, browser-native media conversion',
     studio: 'Studio',
     guide: 'Guide',
@@ -153,7 +153,7 @@ export const translations = {
     tagsUpdated: 'Preset tags updated.',
   },
   id: {
-    appName: 'Encode.Core',
+    appName: 'OcularMP4',
     appTagline: 'Konversi media privat langsung di browser',
     studio: 'Studio',
     guide: 'Panduan',

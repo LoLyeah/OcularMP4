@@ -4,7 +4,7 @@ const packageJson = JSON.parse(await readFile(new URL('../package.json', import.
 const version = packageJson.version;
 const files = [
   ['public/sw.js', `APP_VERSION = '${version}'`],
-  ['public/manifest.json', '"short_name": "Encode.Core"'],
+  ['public/manifest.json', '"short_name": "OcularMP4"'],
   ['components/settings-panel.tsx', `>${version}<`],
 ];
 
@@ -16,4 +16,4 @@ for (const [file, marker] of files) {
   }
 }
 
-console.log(`Encode.Core version ${version} is consistent.`);
+console.log(`OcularMP4 version ${version} is consistent.`);

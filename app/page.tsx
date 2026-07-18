@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import Image from 'next/image';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown,
@@ -462,7 +463,7 @@ export default function PresetStudio() {
       <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 lg:px-8">
         <header className="sticky top-3 z-20 mb-7 flex items-center justify-between rounded-2xl border border-white/10 bg-[#111a30]/90 px-4 py-3 shadow-2xl shadow-black/20 backdrop-blur-xl">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-cyan-300 to-indigo-500 text-lg font-black text-[#0b1020]">E</div>
+            <Image src="/logo-mark.svg" alt="" width={40} height={40} priority className="h-10 w-10 rounded-xl" />
             <div>
               <div className="font-semibold tracking-tight text-white">{t('appName')}</div>
               <div className="hidden text-xs text-slate-400 sm:block">{t('appTagline')}</div>

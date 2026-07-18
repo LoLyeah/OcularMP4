@@ -1,6 +1,6 @@
 {
-  "name": "Video Encoder & Preset Studio",
-  "description": "An elegant, high-performance web-based video transcoder featuring custom quality presets, AI-powered command generation via Gemini, and hardware-accelerated fallback transcoding.",
+  "name": "OcularMP4",
+  "description": "A private browser-based media converter with local transcoding, reusable presets, and optional AI-generated FFmpeg configurations.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
