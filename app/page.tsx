@@ -141,10 +141,13 @@ export default function PresetStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const presetImportRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
 
   const t = (key: TranslationKey) => translations[locale][key];
   const reduceMotion = settings.motion === 'reduced' || (settings.motion === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  const motionProps = reduceMotion ? { initial: false, animate: undefined, exit: undefined, transition: { duration: 0 } } : { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -8 }, transition: { duration: 0.22 } };
+  // `mode="wait"` runs the exit before the enter, so keep each leg short enough
+  // that a step change still feels immediate rather than sluggish.
+  const motionProps = reduceMotion ? { initial: false, animate: undefined, exit: undefined, transition: { duration: 0 } } : { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -8 }, transition: { duration: 0.15, ease: [0.22, 1, 0.36, 1] as const } };
 
   const [customFormat, setCustomFormat] = useState<PresetSettings['format']>(activePreset.settings.format);
   const [customVcodec, setCustomVcodec] = useState<PresetSettings['vcodec']>(activePreset.settings.vcodec);
@@ -154,6 +157,37 @@ export default function PresetStudio() {
   const [customVbitrate, setCustomVbitrate] = useState(activePreset.settings.vbitrate);
   const [customAudioEnabled, setCustomAudioEnabled] = useState(activePreset.settings.audioEnabled);
   const [customArgs, setCustomArgs] = useState(activePreset.ffmpegArgs.join(' '));
+
+  useEffect(() => {
+    if (!panel) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])') || []);
+    const timer = window.setTimeout(() => focusable()[0]?.focus(), 0);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setPanel(null);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [panel]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -555,7 +589,10 @@ export default function PresetStudio() {
   const steps = [t('importStep'), t('presetStep'), t('adjustStep'), t('exportStep')];
 
   return (
-    <main className="min-h-screen bg-[#0b1020] text-slate-100">
+    <main id="main-content" tabIndex={-1} aria-busy={transcoding} className="relative min-h-screen overflow-hidden bg-transparent text-slate-100">
+      <a href="#studio-content" className="sr-only z-50 rounded-lg bg-cyan-300 px-4 py-2 font-semibold text-[#0b1020] focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{t('skipToContent')}</a>
+      <div aria-hidden="true" className="ambient-glow pointer-events-none absolute -left-48 -top-56 h-[34rem] w-[34rem] rounded-full bg-indigo-400/10 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute -right-56 top-24 h-[30rem] w-[30rem] rounded-full bg-cyan-300/5 blur-3xl" />
       <div className="mx-auto max-w-[1440px] px-4 py-4 sm:px-6 lg:px-8">
         <header className="sticky top-3 z-20 mb-7 flex items-center justify-between rounded-2xl border border-white/10 bg-[#111a30]/90 px-4 py-3 shadow-2xl shadow-black/20 backdrop-blur-xl">
           <div className="flex items-center gap-3">
@@ -582,12 +619,12 @@ export default function PresetStudio() {
           <aside className="hidden rounded-2xl border border-white/10 bg-[#111a30] p-3 lg:block">
             <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('workflow')}</div>
             <div className="space-y-1">
-              {steps.map((label, index) => <button key={label} onClick={() => index <= step && setStep(index)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${step === index ? 'bg-cyan-300 text-[#0b1020]' : index < step ? 'text-cyan-200 hover:bg-white/5' : 'text-slate-500'}`}><span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${step === index ? 'bg-[#0b1020] text-cyan-200' : index < step ? 'bg-cyan-300/15 text-cyan-200' : 'bg-white/5'}`}>{index < step ? <Check className="h-4 w-4" /> : index + 1}</span>{label}</button>)}
+              {steps.map((label, index) => <button key={label} aria-current={step === index ? 'step' : undefined} onClick={() => index <= step && setStep(index)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${step === index ? 'bg-cyan-300 text-[#0b1020]' : index < step ? 'text-cyan-200 hover:bg-white/5' : 'text-slate-500'}`}><span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${step === index ? 'bg-[#0b1020] text-cyan-200' : index < step ? 'bg-cyan-300/15 text-cyan-200' : 'bg-white/5'}`}>{index < step ? <Check className="h-4 w-4" /> : index + 1}</span>{label}</button>)}
             </div>
             <div className="mt-8 rounded-xl border border-cyan-300/10 bg-cyan-300/5 p-3 text-xs text-slate-400"><ShieldCheck className="mb-2 h-4 w-4 text-cyan-200" /><p>{t('guidePrivacyBody')}</p></div>
           </aside>
 
-          <div>
+          <div id="studio-content">
             <div className="mb-5 flex items-center justify-between">
               <div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">{steps[step]}</p><h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{step === 0 ? t('importTitle') : step === 1 ? t('choosePreset') : step === 2 ? t('tuneTitle') : t('exportTitle')}</h1></div>
               <div className="text-right text-xs text-slate-500"><span className="text-slate-300">{step + 1}</span> / {steps.length}</div>
@@ -597,7 +634,7 @@ export default function PresetStudio() {
             <AnimatePresence mode="wait">
               <motion.div key={step} {...motionProps}>
                 {step === 0 && <section className="space-y-5">
-                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="group cursor-pointer rounded-3xl border border-dashed border-white/15 bg-[#111a30] p-8 text-center transition hover:border-cyan-300/60 hover:bg-[#14213d] sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition group-hover:scale-105"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mb-6 text-sm text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="dropzone group cursor-pointer rounded-3xl border border-dashed border-white/15 p-8 text-center transition sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition duration-300 group-hover:scale-110 group-hover:rotate-2"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mx-auto mb-6 max-w-[52ch] text-sm leading-6 text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
                   {queue.length > 0 && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="text-sm font-semibold text-white">{t('queue')} <span className="text-xs font-normal text-slate-500">({queue.length})</span></div>
@@ -609,7 +646,7 @@ export default function PresetStudio() {
                         </> : <button onClick={() => fileInputRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
                       </div>
                     </div>
-                    <div className="space-y-2">{queue.map((job) => <div key={job.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-black/15 p-3"><button onClick={() => selectQueueJob(job)} className="min-w-0 flex-1 text-left"><div className="truncate text-xs font-medium text-white">{job.file.name}</div><div className="mt-1 text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</div></button>{job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="rounded-md p-1.5 text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}{job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="rounded-md p-1.5 text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}{job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}</div>)}</div>
+                    <div aria-live="polite" aria-busy={transcoding} className="space-y-2">{queue.map((job) => <div key={job.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-black/15 p-3"><button onClick={() => selectQueueJob(job)} className="min-w-0 flex-1 text-left"><div className="truncate text-xs font-medium text-white">{job.file.name}</div><div className="mt-1 text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</div></button>{job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="rounded-md p-1.5 text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}{job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="rounded-md p-1.5 text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}{job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}</div>)}</div>
                   </div>}
                   {selectedFile && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-cyan-200" />{t('trim')}</div><span className="rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">{trimStart.toFixed(1)}s – {(trimEnd || duration).toFixed(1)}s</span></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs text-slate-400">{t('start')}<input aria-label={t('start')} type="range" min="0" max={duration || 1} step="0.1" value={trimStart} onChange={(event) => setTrimStart(Math.min(Number(event.target.value), Math.max(0, (trimEnd || duration) - 0.1)))} className="mt-3 w-full accent-cyan-300" /></label><label className="text-xs text-slate-400">{t('end')}<input aria-label={t('end')} type="range" min="0" max={duration || 1} step="0.1" value={trimEnd || duration} onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.1))} className="mt-3 w-full accent-indigo-400" /></label></div></div>}
                   <div className="flex justify-end"><button onClick={selectAndContinue} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] transition hover:bg-cyan-200">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
@@ -643,7 +680,7 @@ export default function PresetStudio() {
       </div>
 
       <AnimatePresence>
-        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } })} /><motion.aside className="fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { type: 'spring', damping: 28, stiffness: 260 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
+        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '105%', opacity: .5 }, animate: { x: 0, opacity: 1 }, exit: { x: '105%', opacity: .5 }, transition: { type: 'spring', mass: .7, damping: 25, stiffness: 230 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-xl border border-white/10 p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
       <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-cyan-300/30 bg-[#14213d] px-4 py-3 text-sm text-cyan-100 shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 12 } })}>{toast}</motion.div>}</AnimatePresence>
     </main>

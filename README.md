@@ -201,7 +201,7 @@ presets.
 
 ## Versioning
 
-The current application version is `0.4.1`. OcularMP4 follows Semantic
+The current application version is `0.6.0`. OcularMP4 follows Semantic
 Versioning and uses Conventional Commit messages and `vX.Y.Z` release tags.
 
 When releasing a new version, update the version in `package.json` and
