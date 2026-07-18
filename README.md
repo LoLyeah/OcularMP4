@@ -62,15 +62,19 @@ OcularMP4 follows a four-step workflow:
 4. **Export** — run the conversion, preview compatible results, and download
    the output.
 
-Five built-in presets cover common starting points:
+Nine built-in presets cover common starting points:
 
 | Preset | Intended result |
 | --- | --- |
 | Quick compatibility share | H.264/AAC MP4 at 720p |
-| Small file for chat | Compact VP9/Opus WebM at 480p |
+| Small but HQ | Compact AV1/Opus WebM at 720p |
+| Discord 25 MB | Discord-ready H.264/AAC MP4 with a 24 MB safety cap |
 | HQ cinematic | High-quality HEVC/AAC MP4 at 1080p |
+| Efficient AV1 encode | High-efficiency AV1/Opus WebM at 1080p |
+| Efficient but less Compatibility | Quality-focused AV1/Opus WebM with slower encoding |
 | Looping GIF | Palette-optimized 480p GIF |
 | Clean audio extraction | MP3 audio extracted from video |
+| Opus audio encode | Audio-only Opus WebM at 128 Kbps |
 
 ## Conversion engines
 

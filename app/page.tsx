@@ -35,11 +35,19 @@ const DEFAULT_PRESETS: Preset[] = [
   },
   {
     id: 'tiny-chat',
-    name: 'Small file for chat',
-    description: 'Compact WebM output for strict upload limits.',
+    name: 'Small but HQ',
+    description: 'Compact 720p AV1 and Opus WebM that preserves strong visual quality.',
     category: 'size',
-    ffmpegArgs: ['-c:v', 'libvpx-vp9', '-b:v', '350k', '-crf', '35', '-vf', 'scale=-2:480', '-c:a', 'libopus', '-b:a', '64k'],
-    settings: { format: 'webm', vcodec: 'vp9', acodec: 'opus', resolution: '480p', fps: 24, vbitrate: '350k', abitrate: '64k', audioEnabled: true, volume: 1 },
+    ffmpegArgs: ['-c:v', 'libaom-av1', '-crf', '34', '-b:v', '0', '-cpu-used', '6', '-row-mt', '1', '-vf', 'scale=-2:720', '-r', '24', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '80k', '-vbr', 'on'],
+    settings: { format: 'webm', vcodec: 'av1', acodec: 'opus', resolution: '720p', fps: 24, vbitrate: 'auto', abitrate: '80k', audioEnabled: true, volume: 1 },
+  },
+  {
+    id: 'discord-25mb',
+    name: 'Discord 25 MB',
+    description: 'Discord-ready MP4 capped at 24 MB for upload headroom; long clips may be truncated.',
+    category: 'size',
+    ffmpegArgs: ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '28', '-vf', 'scale=-2:720', '-r', '30', '-c:a', 'aac', '-b:a', '96k', '-movflags', '+faststart', '-fs', '24M'],
+    settings: { format: 'mp4', vcodec: 'h264', acodec: 'aac', resolution: '720p', fps: 30, vbitrate: 'auto', abitrate: '96k', audioEnabled: true, volume: 1 },
   },
   {
     id: 'hq-cinema',
@@ -48,6 +56,22 @@ const DEFAULT_PRESETS: Preset[] = [
     category: 'hq',
     ffmpegArgs: ['-c:v', 'libx265', '-crf', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k'],
     settings: { format: 'mp4', vcodec: 'hevc', acodec: 'aac', resolution: '1080p', fps: 30, vbitrate: 'auto', abitrate: '192k', audioEnabled: true, volume: 1 },
+  },
+  {
+    id: 'av1-efficient',
+    name: 'Efficient AV1 encode',
+    description: 'High-efficiency AV1 and Opus WebM with a faster browser-friendly encode.',
+    category: 'hq',
+    ffmpegArgs: ['-c:v', 'libaom-av1', '-crf', '32', '-b:v', '0', '-cpu-used', '6', '-row-mt', '1', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '128k'],
+    settings: { format: 'webm', vcodec: 'av1', acodec: 'opus', resolution: '1080p', fps: 30, vbitrate: 'auto', abitrate: '128k', audioEnabled: true, volume: 1 },
+  },
+  {
+    id: 'efficient-less-compatible',
+    name: 'Efficient but less Compatibility',
+    description: 'Quality-focused AV1 and Opus WebM with maximum efficiency but slower encoding and reduced playback support.',
+    category: 'hq',
+    ffmpegArgs: ['-c:v', 'libaom-av1', '-crf', '28', '-b:v', '0', '-cpu-used', '4', '-row-mt', '1', '-pix_fmt', 'yuv420p', '-c:a', 'libopus', '-b:a', '96k', '-vbr', 'on'],
+    settings: { format: 'webm', vcodec: 'av1', acodec: 'opus', resolution: '1080p', fps: 30, vbitrate: 'auto', abitrate: '96k', audioEnabled: true, volume: 1 },
   },
   {
     id: 'gif-animator',
@@ -64,6 +88,14 @@ const DEFAULT_PRESETS: Preset[] = [
     category: 'audio',
     ffmpegArgs: ['-vn', '-c:a', 'libmp3lame', '-q:a', '2'],
     settings: { format: 'mp3', vcodec: 'none', acodec: 'mp3', resolution: 'original', fps: 30, vbitrate: 'auto', abitrate: '192k', audioEnabled: true, volume: 1 },
+  },
+  {
+    id: 'opus-audio',
+    name: 'Opus audio encode',
+    description: 'Efficient audio-only Opus encode in a WebM container.',
+    category: 'audio',
+    ffmpegArgs: ['-vn', '-c:a', 'libopus', '-b:a', '128k', '-vbr', 'on', '-compression_level', '10'],
+    settings: { format: 'webm', vcodec: 'none', acodec: 'opus', resolution: 'original', fps: 30, vbitrate: 'auto', abitrate: '128k', audioEnabled: true, volume: 1 },
   },
 ];
 

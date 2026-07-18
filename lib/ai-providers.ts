@@ -52,7 +52,7 @@ export const PRESET_JSON_SCHEMA = {
       required: ['format', 'vcodec', 'acodec', 'resolution', 'fps', 'vbitrate', 'abitrate', 'audioEnabled', 'volume'],
       properties: {
         format: { type: 'string', enum: ['mp4', 'webm', 'gif', 'mp3', 'aac', 'mkv'] },
-        vcodec: { type: 'string', enum: ['h264', 'vp9', 'hevc', 'gif', 'none'] },
+        vcodec: { type: 'string', enum: ['h264', 'vp9', 'hevc', 'av1', 'gif', 'none'] },
         acodec: { type: 'string', enum: ['aac', 'opus', 'mp3', 'none'] },
         resolution: { type: 'string', enum: ['1080p', '720p', '480p', '360p', 'original'] },
         fps: { type: 'integer' },
@@ -85,7 +85,7 @@ Stop after producing the complete JSON object.`;
 
 export function validatePresetData(value: any) {
   const formats = ['mp4', 'webm', 'gif', 'mp3', 'aac', 'mkv'];
-  const videoCodecs = ['h264', 'vp9', 'hevc', 'gif', 'none'];
+  const videoCodecs = ['h264', 'vp9', 'hevc', 'av1', 'gif', 'none'];
   const audioCodecs = ['aac', 'opus', 'mp3', 'none'];
   const resolutions = ['1080p', '720p', '480p', '360p', 'original'];
   const categories = ['compatible', 'size', 'hq', 'audio', 'gif', 'custom'];

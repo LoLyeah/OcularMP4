@@ -2,7 +2,7 @@ import { validatePresetData } from './ai-providers';
 
 export interface PresetSettings {
   format: 'mp4' | 'webm' | 'gif' | 'mp3' | 'aac' | 'mkv';
-  vcodec: 'h264' | 'vp9' | 'hevc' | 'gif' | 'none';
+  vcodec: 'h264' | 'vp9' | 'hevc' | 'av1' | 'gif' | 'none';
   acodec: 'aac' | 'opus' | 'mp3' | 'none';
   resolution: '1080p' | '720p' | '480p' | '360p' | 'original';
   fps: number;
