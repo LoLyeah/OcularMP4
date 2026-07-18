@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown,
@@ -566,14 +567,14 @@ export default function PresetStudio() {
           </div>
           <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
             <button className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white">{t('studio')}</button>
-            <button onClick={() => setPanel('guide')} className="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"><CircleHelp className="mr-1.5 inline h-4 w-4" />{t('guide')}</button>
+            <Link href="/guide" className="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"><CircleHelp className="mr-1.5 inline h-4 w-4" />{t('guide')}</Link>
           </nav>
           <div className="flex items-center gap-2">
             <div className="hidden items-center rounded-lg border border-white/10 bg-black/20 p-0.5 sm:flex" aria-label={t('language')}>
               {(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => updateSettings({ locale: item })} className={`rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}
             </div>
             <button onClick={() => setPanel('settings')} aria-label={t('settings')} className="rounded-xl border border-white/10 p-2.5 text-slate-300 transition hover:border-cyan-300/50 hover:text-white"><Settings2 className="h-5 w-5" /></button>
-            <button className="rounded-xl border border-white/10 p-2.5 text-slate-300 md:hidden" aria-label={t('guide')} onClick={() => setPanel('guide')}><Menu className="h-5 w-5" /></button>
+            <Link href="/guide" className="rounded-xl border border-white/10 p-2.5 text-slate-300 md:hidden" aria-label={t('guide')}><Menu className="h-5 w-5" /></Link>
           </div>
         </header>
 
