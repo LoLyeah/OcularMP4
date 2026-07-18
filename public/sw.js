@@ -1,4 +1,4 @@
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.5.0';
 const CACHE_NAME = `ocularmp4-app-v${APP_VERSION}`;
 const RUNTIME_CACHE = `ocularmp4-runtime-v${APP_VERSION}`;
 
@@ -8,6 +8,7 @@ const PRECACHE_ASSETS = [
   '/manifest.json',
   '/favicon.svg',
   '/logo-mark.svg',
+  '/og.png',
   '/icon-192.svg',
   '/icon-512.svg'
 ];

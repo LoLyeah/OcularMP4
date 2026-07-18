@@ -1,5 +1,7 @@
 # OcularMP4
 
+[Open the official OcularMP4 website](https://ocularmp4.netlify.app)
+
 OcularMP4 is a private, installable media-conversion studio that runs in the
 browser. It provides a guided workflow for importing and trimming local media,
 choosing or generating an encoding preset, adjusting the output, converting the
@@ -27,6 +29,8 @@ arguments.
 - Generates validated encoding presets from natural-language requests using a
   configured AI provider
 - Keeps up to 30 AI generations in local history for reuse
+- Adds a multi-file conversion queue with sequential processing, per-job status,
+  retry, cancel, and individual downloads
 - Provides English and Bahasa Indonesia interfaces, light/dark/system themes,
   and reduced-motion support
 - Registers as a progressive web app and caches the interface and downloaded
@@ -44,6 +48,10 @@ OcularMP4 has two distinct processing paths.
 The native engine does not honor the selected container, codec, audio setting,
 or custom FFmpeg arguments; its output is WebM video. Load and select
 FFmpeg.wasm when the exact preset output matters.
+
+When multiple files are queued, FFmpeg.wasm processes them sequentially with
+the selected preset. The lightweight native engine remains available for
+single-file conversions.
 
 FFmpeg is loaded on demand from `unpkg.com` using `@ffmpeg/core` 0.12.6. The
 first load therefore requires network access. The service worker caches the

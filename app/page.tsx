@@ -7,7 +7,7 @@ import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown,
   CircleHelp, Clock3, Cpu, Download, FileVideo, FolderOpen, Layers3, Menu,
   Heart, History, Pencil, Search, Settings2, ShieldCheck, Sparkles, Tag, Trash2, Upload, Volume2, VolumeX,
-  Wand2, X
+  Wand2, X, Pause, Play, RotateCcw
 } from 'lucide-react';
 import { translations, type Locale, type TranslationKey } from '../lib/i18n';
 import { generateDirectPreset, getAIProvider } from '../lib/ai-providers';
@@ -63,6 +63,17 @@ const DEFAULT_PRESETS: Preset[] = [
 
 const categories: Array<'all' | Preset['category']> = ['all', 'compatible', 'size', 'hq', 'audio', 'gif', 'custom'];
 const categoryKey: Record<string, TranslationKey> = { all: 'all', compatible: 'compatible', size: 'small', hq: 'quality', audio: 'audio', gif: 'gif', custom: 'custom' };
+type QueueStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+interface QueueJob {
+  id: string;
+  file: File;
+  status: QueueStatus;
+  progress: number;
+  outputUrl?: string;
+  outputName?: string;
+  outputSize?: string;
+  error?: string;
+}
 function getMimeType(format: string) {
   return ({ mp4: 'video/mp4', webm: 'video/webm', gif: 'image/gif', mp3: 'audio/mpeg', aac: 'audio/aac', mkv: 'video/x-matroska' } as Record<string, string>)[format] || 'application/octet-stream';
 }
@@ -94,6 +105,10 @@ export default function PresetStudio() {
   const [step, setStep] = useState(0);
   const [toast, setToast] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [queue, setQueue] = useState<QueueJob[]>([]);
+  const cancelQueueRef = useRef(false);
+  const pauseQueueRef = useRef(false);
+  const [queuePaused, setQueuePaused] = useState(false);
   const [fileUrl, setFileUrl] = useState('');
   const [duration, setDuration] = useState(0);
   const [trimStart, setTrimStart] = useState(0);
@@ -259,8 +274,8 @@ export default function PresetStudio() {
     if (patch.defaultEngine) setEngine(patch.defaultEngine);
   };
 
-  const handleFile = (file?: File) => {
-    if (!file) return;
+  const selectQueueJob = (job: QueueJob) => {
+    const file = job.file;
     if (fileUrl) URL.revokeObjectURL(fileUrl);
     const url = URL.createObjectURL(file);
     setSelectedFile(file);
@@ -272,6 +287,19 @@ export default function PresetStudio() {
     setTrimEnd(0);
     setStep(0);
     log(`Selected ${file.name}`);
+  };
+
+  const addFiles = (files: File[] | FileList) => {
+    const incoming = Array.from(files).filter((file) => file.type.startsWith('video/') || file.type.startsWith('audio/'));
+    if (!incoming.length) return;
+    const jobs = incoming.map((file) => ({ id: uniqueId('job'), file, status: 'queued' as QueueStatus, progress: 0 }));
+    setQueue((current) => [...current, ...jobs]);
+    if (!selectedFile) selectQueueJob(jobs[0]);
+    setToast(`${incoming.length} ${t('filesAdded')}`);
+  };
+
+  const handleFile = (file?: File) => {
+    if (file) addFiles([file]);
   };
 
   const handleMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -384,9 +412,7 @@ export default function PresetStudio() {
     setToast(t('presetSaved'));
   };
 
-  const handleTranscode = async () => {
-    if (!selectedFile || !videoRef.current) return;
-    setTranscoding(true);
+  const transcodeFile = async (workingFile: File, jobId?: string) => {
     setProgress(0);
     setOutputUrl('');
     const started = Date.now();
@@ -394,23 +420,25 @@ export default function PresetStudio() {
       if (engine === 'ffmpeg') {
         if (!ffmpeg) throw new Error('Load FFmpeg.wasm first.');
         const { fetchFile } = await import('@ffmpeg/util');
-        const inputExt = selectedFile.name.split('.').pop() || 'mp4';
+        const inputExt = workingFile.name.split('.').pop() || 'mp4';
         const inputName = `input.${inputExt}`;
         const output = `output.${customFormat}`;
-        await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
+        await ffmpeg.writeFile(inputName, await fetchFile(workingFile));
         const args = ['-ss', trimStart.toFixed(3), '-to', (trimEnd || duration).toFixed(3), '-i', inputName, ...customArgs.split(/\s+/).filter(Boolean), output];
         await ffmpeg.exec(args);
         const data = await ffmpeg.readFile(output);
         const blob = new Blob([data], { type: getMimeType(customFormat) });
         setOutputUrl(URL.createObjectURL(blob));
-        setOutputName(`converted_${selectedFile.name.replace(/\.[^/.]+$/, '')}.${customFormat}`);
+        const outputFileName = `converted_${workingFile.name.replace(/\.[^/.]+$/, '')}.${customFormat}`;
+        setOutputName(outputFileName);
         setOutputSize(formatBytes(blob.size));
+        if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
         await ffmpeg.deleteFile(inputName);
         await ffmpeg.deleteFile(output);
       } else {
         const video = videoRef.current;
         const canvas = canvasRef.current;
-        if (!canvas) throw new Error('Preview canvas unavailable.');
+        if (!video || !canvas) throw new Error('Preview canvas unavailable.');
         const width = customResolution === '1080p' ? 1920 : customResolution === '720p' ? 1280 : customResolution === '480p' ? 854 : customResolution === '360p' ? 640 : video.videoWidth;
         const height = customResolution === '1080p' ? 1080 : customResolution === '720p' ? 720 : customResolution === '480p' ? 480 : customResolution === '360p' ? 360 : video.videoHeight;
         canvas.width = width || 1280;
@@ -423,8 +451,10 @@ export default function PresetStudio() {
           recorder.onstop = () => {
             const blob = new Blob(chunks, { type: 'video/webm' });
             setOutputUrl(URL.createObjectURL(blob));
-            setOutputName(`converted_${selectedFile.name.replace(/\.[^/.]+$/, '')}.webm`);
+            const outputFileName = `converted_${workingFile.name.replace(/\.[^/.]+$/, '')}.webm`;
+            setOutputName(outputFileName);
             setOutputSize(formatBytes(blob.size));
+            if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
             resolve();
           };
         });
@@ -447,13 +477,78 @@ export default function PresetStudio() {
       }
       setProgress(100);
       setElapsed(Number(((Date.now() - started) / 1000).toFixed(1)));
-      setStep(3);
-      setToast(t('complete'));
+      if (!jobId || queue.length <= 1) {
+        setStep(3);
+        setToast(t('complete'));
+      }
     } catch (error: any) {
+      if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'failed', error: error?.message || t('error') } : job));
       setToast(error?.message || t('error'));
     } finally {
-      setTranscoding(false);
     }
+  };
+
+  const handleTranscode = async () => {
+    if (!selectedFile || !videoRef.current) return;
+    if (queue.length > 1 && engine === 'native') {
+      setToast(t('queueNeedsFfmpeg'));
+      return;
+    }
+    setTranscoding(true);
+    cancelQueueRef.current = false;
+    pauseQueueRef.current = false;
+    setQueuePaused(false);
+    const jobs = queue.length ? queue : [{ id: uniqueId('job'), file: selectedFile, status: 'queued' as QueueStatus, progress: 0 }];
+    if (!queue.length) setQueue(jobs);
+    for (const job of jobs) {
+      if (cancelQueueRef.current) break;
+      if (job.status === 'completed') continue;
+      while (pauseQueueRef.current && !cancelQueueRef.current) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+      if (cancelQueueRef.current) break;
+      setQueue((current) => current.map((item) => item.id === job.id ? { ...item, status: 'processing', progress: 0, error: undefined } : item));
+      setSelectedFile(job.file);
+      await transcodeFile(job.file, job.id);
+    }
+    setTranscoding(false);
+    if (!cancelQueueRef.current) {
+      setProgress(100);
+      setStep(3);
+      setToast(queue.length > 1 ? t('queueComplete') : t('complete'));
+    }
+  };
+
+  const cancelQueue = () => {
+    cancelQueueRef.current = true;
+    pauseQueueRef.current = false;
+    setQueuePaused(false);
+    setQueue((current) => current.map((job) => job.status === 'queued' || job.status === 'processing' ? { ...job, status: 'cancelled' } : job));
+    setTranscoding(false);
+  };
+
+  const toggleQueuePause = () => {
+    pauseQueueRef.current = !pauseQueueRef.current;
+    setQueuePaused(pauseQueueRef.current);
+  };
+
+  const retryJob = (job: QueueJob) => {
+    setQueue((current) => current.map((item) => item.id === job.id ? { ...item, status: 'queued', progress: 0, error: undefined } : item));
+    setToast(t('jobQueued'));
+  };
+
+  const removeJob = (job: QueueJob) => {
+    if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);
+    setQueue((current) => current.filter((item) => item.id !== job.id));
+    if (selectedFile === job.file) {
+      setSelectedFile(null);
+      setFileUrl('');
+    }
+  };
+
+  const clearCompletedJobs = () => {
+    queue.filter((job) => job.status === 'completed').forEach((job) => job.outputUrl && URL.revokeObjectURL(job.outputUrl));
+    setQueue((current) => current.filter((job) => job.status !== 'completed'));
   };
 
   const steps = [t('importStep'), t('presetStep'), t('adjustStep'), t('exportStep')];
@@ -501,7 +596,20 @@ export default function PresetStudio() {
             <AnimatePresence mode="wait">
               <motion.div key={step} {...motionProps}>
                 {step === 0 && <section className="space-y-5">
-                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); handleFile(event.dataTransfer.files[0]); }} onClick={() => fileInputRef.current?.click()} className="group cursor-pointer rounded-3xl border border-dashed border-white/15 bg-[#111a30] p-8 text-center transition hover:border-cyan-300/60 hover:bg-[#14213d] sm:p-14"><input ref={fileInputRef} type="file" accept="video/*,audio/*" className="hidden" onChange={(event) => handleFile(event.target.files?.[0])} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition group-hover:scale-105"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mb-6 text-sm text-slate-400">{t('supported')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedFile(null); setFileUrl(''); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="group cursor-pointer rounded-3xl border border-dashed border-white/15 bg-[#111a30] p-8 text-center transition hover:border-cyan-300/60 hover:bg-[#14213d] sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition group-hover:scale-105"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mb-6 text-sm text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  {queue.length > 0 && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-white">{t('queue')} <span className="text-xs font-normal text-slate-500">({queue.length})</span></div>
+                      <div className="flex flex-wrap gap-2">
+                        {queue.some((job) => job.status === 'completed') && <button onClick={clearCompletedJobs} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5">{t('clearCompleted')}</button>}
+                        {transcoding ? <>
+                          <button onClick={toggleQueuePause} className="rounded-lg border border-amber-300/20 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-300/10">{queuePaused ? <Play className="mr-1 inline h-3.5 w-3.5" /> : <Pause className="mr-1 inline h-3.5 w-3.5" />}{queuePaused ? t('resumeQueue') : t('pauseQueue')}</button>
+                          <button onClick={cancelQueue} className="rounded-lg border border-rose-300/20 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-300/10"><X className="mr-1 inline h-3.5 w-3.5" />{t('cancelQueue')}</button>
+                        </> : <button onClick={() => fileInputRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
+                      </div>
+                    </div>
+                    <div className="space-y-2">{queue.map((job) => <div key={job.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-black/15 p-3"><button onClick={() => selectQueueJob(job)} className="min-w-0 flex-1 text-left"><div className="truncate text-xs font-medium text-white">{job.file.name}</div><div className="mt-1 text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</div></button>{job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="rounded-md p-1.5 text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}{job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="rounded-md p-1.5 text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}{job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}</div>)}</div>
+                  </div>}
                   {selectedFile && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-cyan-200" />{t('trim')}</div><span className="rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">{trimStart.toFixed(1)}s – {(trimEnd || duration).toFixed(1)}s</span></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs text-slate-400">{t('start')}<input aria-label={t('start')} type="range" min="0" max={duration || 1} step="0.1" value={trimStart} onChange={(event) => setTrimStart(Math.min(Number(event.target.value), Math.max(0, (trimEnd || duration) - 0.1)))} className="mt-3 w-full accent-cyan-300" /></label><label className="text-xs text-slate-400">{t('end')}<input aria-label={t('end')} type="range" min="0" max={duration || 1} step="0.1" value={trimEnd || duration} onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.1))} className="mt-3 w-full accent-indigo-400" /></label></div></div>}
                   <div className="flex justify-end"><button onClick={selectAndContinue} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] transition hover:bg-cyan-200">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
                 </section>}
@@ -518,7 +626,7 @@ export default function PresetStudio() {
                 {step === 2 && <section className="space-y-5">
                   <div className="grid gap-4 rounded-2xl border border-white/10 bg-[#111a30] p-5 sm:grid-cols-2"><Field label={t('format')}><select value={customFormat} onChange={(event) => setCustomFormat(event.target.value as PresetSettings['format'])}><option value="mp4">MP4</option><option value="webm">WebM</option><option value="gif">GIF</option><option value="mp3">MP3</option><option value="mkv">MKV</option></select></Field><Field label={t('videoCodec')}><select value={customVcodec} onChange={(event) => setCustomVcodec(event.target.value as PresetSettings['vcodec'])}><option value="h264">H.264</option><option value="vp9">VP9</option><option value="hevc">HEVC</option><option value="gif">GIF</option><option value="none">None</option></select></Field><Field label={t('resolution')}><select value={customResolution} onChange={(event) => setCustomResolution(event.target.value as PresetSettings['resolution'])}><option value="original">Original</option><option value="1080p">1080p</option><option value="720p">720p</option><option value="480p">480p</option><option value="360p">360p</option></select></Field><Field label={t('frameRate')}><select value={customFps} onChange={(event) => setCustomFps(Number(event.target.value))}><option value="60">60 FPS</option><option value="30">30 FPS</option><option value="24">24 FPS</option><option value="15">15 FPS</option><option value="12">12 FPS</option></select></Field><Field label={t('bitrate')}><select value={customVbitrate} onChange={(event) => setCustomVbitrate(event.target.value)}><option value="auto">Auto</option><option value="5000k">5 Mbps</option><option value="2500k">2.5 Mbps</option><option value="1200k">1.2 Mbps</option><option value="500k">500 Kbps</option></select></Field><div><span className="mb-2 block text-xs text-slate-400">{t('audioTrack')}</span><button onClick={() => setCustomAudioEnabled((value) => !value)} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm ${customAudioEnabled ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-black/20 text-slate-500'}`}>{customAudioEnabled ? t('enabled') : t('muted')}{customAudioEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button></div></div>
                   <details className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-white">{t('advanced')}<ChevronDown className="h-4 w-4 text-slate-500" /></summary><textarea value={customArgs} onChange={(event) => setCustomArgs(event.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs text-slate-200 outline-none focus:border-cyan-300/60" /></details>
-                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="rounded-xl border border-cyan-300/20 px-4 py-3 text-sm text-cyan-100 hover:bg-cyan-300/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || !selectedFile} onClick={handleTranscode} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{transcoding ? t('processing') : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="rounded-xl border border-cyan-300/20 px-4 py-3 text-sm text-cyan-100 hover:bg-cyan-300/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || !selectedFile} onClick={handleTranscode} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{transcoding ? t('processing') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
                   {transcoding && <div className="rounded-xl border border-white/10 bg-[#111a30] p-4"><div className="mb-2 flex justify-between text-xs text-slate-400"><span>{t('processing')}</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-white/10"><motion.div className="h-full bg-gradient-to-r from-cyan-300 to-indigo-400" animate={{ width: `${progress}%` }} /></div></div>}
                 </section>}
 
