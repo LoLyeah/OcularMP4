@@ -13,11 +13,23 @@ const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'
 // that optional hook in the generated server bundle before packaging it.
 const handlerPath = join(openNext, 'server-functions', 'default', 'handler.mjs');
 const handler = await readFile(handlerPath, 'utf8');
-const withoutNodeFileLogger = handler.replace(
+const withWorkerRequire = handler.replace(
+  'import {setInterval, clearInterval, setTimeout, clearTimeout} from "node:timers"',
+  `import {setInterval, clearInterval, setTimeout, clearTimeout} from "node:timers"
+const require = (specifier) => {
+  const module = globalThis.process?.getBuiltinModule?.(specifier);
+  if (module) return module;
+  throw new Error(\`Unsupported Worker module: \${specifier}\`);
+}`,
+);
+if (withWorkerRequire === handler) {
+  throw new Error('Could not add the Node built-in module bridge to the Worker bundle.');
+}
+const withoutNodeFileLogger = withWorkerRequire.replace(
   /var require_console_file=__commonJS\(\{[\s\S]*?console-file\.js"\(exports\)\{[\s\S]*?\}\}\);var require_work_unit_async_storage_instance/,
   'var require_console_file=__commonJS({"console-file.js"(exports){"use strict";}});var require_work_unit_async_storage_instance',
 );
-if (withoutNodeFileLogger === handler) {
+if (withoutNodeFileLogger === withWorkerRequire) {
   throw new Error('Could not remove Next.js Node-only console logger from the Worker bundle.');
 }
 await writeFile(handlerPath, withoutNodeFileLogger);
