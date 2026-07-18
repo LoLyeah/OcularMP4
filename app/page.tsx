@@ -19,6 +19,10 @@ import {
   type AIHistoryItem, type ConversionHistoryItem, type Preset, type PresetSettings,
 } from '../lib/preset-workspace';
 import { SettingsPanel } from '../components/settings-panel';
+import {
+  QUEUE_RECOVERY_KEY, createTempNames, getPreflightIssues, recoverQueueSnapshot, validateFfmpegArgs,
+  type RecoverableQueueJob,
+} from '../lib/conversion-reliability';
 
 const DEFAULT_PRESETS: Preset[] = [
   {
@@ -108,6 +112,7 @@ export default function PresetStudio() {
   const [toast, setToast] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [queue, setQueue] = useState<QueueJob[]>([]);
+  const [recoveredJobs, setRecoveredJobs] = useState<RecoverableQueueJob[]>([]);
   const cancelQueueRef = useRef(false);
   const pauseQueueRef = useRef(false);
   const [queuePaused, setQueuePaused] = useState(false);
@@ -205,6 +210,7 @@ export default function PresetStudio() {
         const storedConversions = readConversionHistory();
         conversionHistoryRef.current = storedConversions;
         setConversionHistory(storedConversions);
+        setRecoveredJobs(recoverQueueSnapshot(JSON.parse(localStorage.getItem(QUEUE_RECOVERY_KEY) || '[]')));
       } catch { /* preserve defaults when storage is invalid */ }
       setSettingsReady(true);
     }, 0);
@@ -221,6 +227,29 @@ export default function PresetStudio() {
     document.documentElement.dataset.motion = settings.motion;
     writeSettings({ ...settings, locale });
   }, [locale, settings, settingsReady]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    const snapshot = queue.map((job) => ({
+      id: job.id,
+      fileName: job.file.name,
+      fileSize: job.file.size,
+      fileType: job.file.type,
+      status: job.status,
+      error: job.error,
+    }));
+    if (snapshot.length) localStorage.setItem(QUEUE_RECOVERY_KEY, JSON.stringify(snapshot));
+    else if (!transcoding) localStorage.removeItem(QUEUE_RECOVERY_KEY);
+  }, [queue, settingsReady, transcoding]);
+
+  useEffect(() => {
+    if (!transcoding) return;
+    const warnBeforeClose = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener('beforeunload', warnBeforeClose);
+    return () => window.removeEventListener('beforeunload', warnBeforeClose);
+  }, [transcoding]);
 
   useEffect(() => {
     if (!toast) return;
@@ -343,6 +372,7 @@ export default function PresetStudio() {
     if (!incoming.length) return;
     const jobs = incoming.map((file) => ({ id: uniqueId('job'), file, status: 'queued' as QueueStatus, progress: 0 }));
     setQueue((current) => [...current, ...jobs]);
+    setRecoveredJobs((current) => current.filter((job) => !incoming.some((file) => file.name === job.fileName && file.size === job.fileSize)));
     if (!selectedFile) selectQueueJob(jobs[0]);
     setToast(`${incoming.length} ${t('filesAdded')}`);
   };
@@ -465,26 +495,26 @@ export default function PresetStudio() {
     setProgress(0);
     setOutputUrl('');
     const started = Date.now();
+    const temporaryFiles: string[] = [];
     try {
       if (engine === 'ffmpeg') {
         if (!ffmpeg) throw new Error('Load FFmpeg.wasm first.');
         const { fetchFile } = await import('@ffmpeg/util');
-        const inputExt = workingFile.name.split('.').pop() || 'mp4';
-        const inputName = `input.${inputExt}`;
-        const output = `output.${customFormat}`;
+        const names = createTempNames(workingFile.name, customFormat, jobId || uniqueId('single'));
+        const inputName = names.inputName;
+        const output = names.outputName;
+        temporaryFiles.push(inputName, output);
         await ffmpeg.writeFile(inputName, await fetchFile(workingFile));
         const args = ['-ss', trimStart.toFixed(3), '-to', (trimEnd || duration).toFixed(3), '-i', inputName, ...customArgs.split(/\s+/).filter(Boolean), output];
         await ffmpeg.exec(args);
         const data = await ffmpeg.readFile(output);
         const blob = new Blob([data], { type: getMimeType(customFormat) });
         setOutputUrl(URL.createObjectURL(blob));
-        const outputFileName = `converted_${workingFile.name.replace(/\.[^/.]+$/, '')}.${customFormat}`;
+        const outputFileName = names.downloadName;
         setOutputName(outputFileName);
         setOutputSize(formatBytes(blob.size));
         if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
         recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: activePreset.name, preset: activePreset });
-        await ffmpeg.deleteFile(inputName);
-        await ffmpeg.deleteFile(output);
       } else {
         const video = videoRef.current;
         const canvas = canvasRef.current;
@@ -533,19 +563,43 @@ export default function PresetStudio() {
         setToast(t('complete'));
       }
     } catch (error: any) {
-      if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'failed', error: error?.message || t('error') } : job));
-      recordConversion({ fileName: workingFile.name, status: 'failed', engine, presetName: activePreset.name, preset: activePreset, error: error?.message || t('error') });
-      setToast(error?.message || t('error'));
+      const cancelled = cancelQueueRef.current;
+      if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: cancelled ? 'cancelled' : 'failed', error: cancelled ? undefined : error?.message || t('error') } : job));
+      recordConversion({ fileName: workingFile.name, status: cancelled ? 'cancelled' : 'failed', engine, presetName: activePreset.name, preset: activePreset, error: cancelled ? undefined : error?.message || t('error') });
+      if (!cancelled) setToast(error?.message || t('error'));
     } finally {
+      if (ffmpeg && temporaryFiles.length) {
+        await Promise.all(temporaryFiles.map((file) => ffmpeg.deleteFile(file).catch(() => undefined)));
+      }
     }
   };
 
   const handleTranscode = async () => {
     if (!selectedFile || !videoRef.current) return;
-    if (queue.length > 1 && engine === 'native') {
-      setToast(t('queueNeedsFfmpeg'));
+    const ffmpegArgs = customArgs.split(/\s+/).filter(Boolean);
+    const issues = getPreflightIssues({
+      capabilities: {
+        webAssembly: typeof WebAssembly !== 'undefined',
+        mediaRecorder: typeof MediaRecorder !== 'undefined',
+        canvasCapture: typeof HTMLCanvasElement !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype,
+      },
+      engine,
+      queueLength: Math.max(1, queue.length),
+      fileSize: Math.max(selectedFile.size, ...queue.map((job) => job.file.size)),
+      args: ffmpegArgs,
+    });
+    const issueMessages: Record<string, TranslationKey> = {
+      'webassembly-unavailable': 'preflightWebAssembly',
+      'native-engine-unavailable': 'preflightNative',
+      'queue-requires-ffmpeg': 'queueNeedsFfmpeg',
+      'large-file': 'preflightLargeFile',
+      'unsafe-arguments': 'preflightUnsafeArgs',
+    };
+    if (issues.length) {
+      setToast(t(issueMessages[issues[0]] || 'error'));
       return;
     }
+    validateFfmpegArgs(ffmpegArgs);
     setTranscoding(true);
     cancelQueueRef.current = false;
     pauseQueueRef.current = false;
@@ -576,6 +630,11 @@ export default function PresetStudio() {
     pauseQueueRef.current = false;
     setQueuePaused(false);
     setQueue((current) => current.map((job) => job.status === 'queued' || job.status === 'processing' ? { ...job, status: 'cancelled' } : job));
+    if (ffmpeg) {
+      ffmpeg.terminate();
+      setFfmpeg(null);
+      setEngine('native');
+    }
     setTranscoding(false);
   };
 
@@ -652,6 +711,7 @@ export default function PresetStudio() {
               <motion.div key={step} {...motionProps}>
                 {step === 0 && <section className="space-y-5">
                   {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="dropzone group cursor-pointer rounded-3xl border border-dashed border-white/15 p-8 text-center transition sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition duration-300 group-hover:scale-110 group-hover:rotate-2"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mx-auto mb-6 max-w-[52ch] text-sm leading-6 text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  {recoveredJobs.length > 0 && <div className="rounded-2xl border border-amber-300/20 bg-amber-300/5 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><AlertCircle className="h-4 w-4" />{t('interruptedQueue')}</div><p className="mt-1 text-xs text-slate-400">{t('interruptedQueueBody')} ({recoveredJobs.map((job) => job.fileName).join(', ')})</p></div><div className="flex gap-2"><button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-amber-200 px-3 py-2 text-xs font-semibold text-[#0b1020]">{t('chooseFilesAgain')}</button><button onClick={() => { setRecoveredJobs([]); localStorage.removeItem(QUEUE_RECOVERY_KEY); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300">{t('dismiss')}</button></div></div></div>}
                   {queue.length > 0 && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="text-sm font-semibold text-white">{t('queue')} <span className="text-xs font-normal text-slate-500">({queue.length})</span></div>

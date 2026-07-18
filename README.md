@@ -32,6 +32,8 @@ arguments.
   retry, cancel, and individual downloads
 - Keeps a private local conversion history with engine, preset, result metadata,
   failure details, and one-click preset reuse
+- Detects interrupted queues, runs capability and FFmpeg-argument preflight
+  checks, cleans temporary files, and warns before closing active conversions
 - Includes a dedicated bilingual wiki guide at `/guide` with workflow,
   engine, preset, queue, privacy, and troubleshooting documentation
 - Provides English and Bahasa Indonesia interfaces, light/dark/system themes,
@@ -149,6 +151,7 @@ deployment value.
 | `npm run build` | Build Next.js, package an OpenNext Cloudflare worker, and prepare the Sites bundle |
 | `npm start` | Run the built Next.js app |
 | `npm run lint` | Run ESLint |
+| `npm run test` | Run conversion reliability unit tests |
 | `npm run typecheck` | Run TypeScript without emitting files |
 | `npm run validate` | Run lint, typecheck, and the complete production build |
 | `npm run version:check` | Verify that version references remain synchronized |
@@ -203,7 +206,7 @@ presets.
 
 ## Versioning
 
-The current application version is `0.7.0`. OcularMP4 follows Semantic
+The current application version is `0.8.0`. OcularMP4 follows Semantic
 Versioning and uses Conventional Commit messages and `vX.Y.Z` release tags.
 
 When releasing a new version, update the version in `package.json` and
