@@ -9,7 +9,7 @@ Bahasa Indonesia.
 
 - Node.js 24
 - npm 11
-- Optional `GEMINI_API_KEY` for AI preset generation
+- A provider API key entered in Settings when using cloud AI
 
 ## Run locally
 
@@ -36,3 +36,14 @@ version in `public/sw.js` whenever a release is cut.
 Encode.Core follows Semantic Versioning. Use Conventional Commit messages and
 tag releases as `vX.Y.Z`. Local settings and custom presets use independent
 schema versions so future releases can migrate saved data safely.
+
+## AI preset providers
+
+AI presets are user-configured in Settings. Supported providers include OpenAI,
+Google Gemini, Groq, Anthropic, OpenRouter, Together AI, Mistral, DeepSeek,
+local Ollama, and custom OpenAI-compatible endpoints.
+
+Cloud API keys are submitted only with the current request and are never stored
+by the server. Keys remain in session storage by default; users can explicitly
+choose to remember a key on their device. Ollama and custom local endpoints are
+called directly from the browser.

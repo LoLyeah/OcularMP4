@@ -9,7 +9,9 @@ import {
   Wand2, X
 } from 'lucide-react';
 import { translations, type Locale, type TranslationKey } from '../lib/i18n';
-import { DEFAULT_SETTINGS, readSettings, writeSettings, type AppSettings } from '../lib/settings';
+import { generateDirectPreset, getAIProvider } from '../lib/ai-providers';
+import { DEFAULT_SETTINGS, readAICredential, readSettings, writeSettings, type AppSettings } from '../lib/settings';
+import { SettingsPanel } from '../components/settings-panel';
 
 interface PresetSettings {
   format: 'mp4' | 'webm' | 'gif' | 'mp3' | 'aac' | 'mkv';
@@ -77,8 +79,6 @@ const DEFAULT_PRESETS: Preset[] = [
 
 const categories: Array<'all' | Preset['category']> = ['all', 'compatible', 'size', 'hq', 'audio', 'gif', 'custom'];
 const categoryKey: Record<string, TranslationKey> = { all: 'all', compatible: 'compatible', size: 'small', hq: 'quality', audio: 'audio', gif: 'gif', custom: 'custom' };
-const appVersion = '0.2.0';
-
 function getMimeType(format: string) {
   return ({ mp4: 'video/mp4', webm: 'video/webm', gif: 'image/gif', mp3: 'audio/mpeg', aac: 'audio/aac', mkv: 'video/x-matroska' } as Record<string, string>)[format] || 'application/octet-stream';
 }
@@ -127,6 +127,7 @@ export default function PresetStudio() {
   const [elapsed, setElapsed] = useState(0);
   const [logs, setLogs] = useState<string[]>(['Native browser engine ready.']);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -154,6 +155,7 @@ export default function PresetStudio() {
         const parsed = JSON.parse(localStorage.getItem('ocularmp4.presets.v1') || 'null');
         if (Array.isArray(parsed)) setPresets([...DEFAULT_PRESETS, ...parsed]);
       } catch { /* preserve defaults when storage is invalid */ }
+      setSettingsReady(true);
     }, 0);
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => undefined);
@@ -162,11 +164,12 @@ export default function PresetStudio() {
   }, []);
 
   useEffect(() => {
+    if (!settingsReady) return;
     document.documentElement.lang = locale;
     document.documentElement.dataset.theme = settings.theme;
     document.documentElement.dataset.motion = settings.motion;
     writeSettings({ ...settings, locale });
-  }, [locale, settings]);
+  }, [locale, settings, settingsReady]);
 
   useEffect(() => {
     if (!toast) return;
@@ -253,21 +256,54 @@ export default function PresetStudio() {
 
   const generatePreset = async () => {
     if (!aiPrompt.trim()) return;
+    const provider = getAIProvider(settings.aiProvider);
+    const apiKey = readAICredential(settings.aiProvider);
+    if (provider.requiresKey && !apiKey) {
+      setAiError(t('apiKeyRequired'));
+      setPanel('settings');
+      return;
+    }
     setAiGenerating(true);
     setAiError('');
+    log(`AI preset request via ${provider.name} (${settings.aiModel}).`);
     try {
-      const response = await fetch('/api/gemini/preset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: aiPrompt, locale }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Preset generation failed.');
-      const generated: Preset = { ...data, id: `ai-${Date.now()}`, category: 'custom' };
+      let presetData;
+      if (provider.direct) {
+        presetData = await generateDirectPreset({
+          provider: settings.aiProvider,
+          endpoint: settings.aiEndpoint,
+          model: settings.aiModel,
+          apiKey,
+          prompt: aiPrompt,
+          locale,
+        });
+      } else {
+        const response = await fetch('/api/ai/preset', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: settings.aiProvider,
+            model: settings.aiModel,
+            apiKey,
+            prompt: aiPrompt,
+            locale,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Preset generation failed.');
+        presetData = data.preset;
+      }
+      const generated: Preset = { ...presetData, id: `ai-${Date.now()}`, category: 'custom' };
       const next = [...presets, generated];
       setPresets(next);
       localStorage.setItem('ocularmp4.presets.v1', JSON.stringify(next.filter((item) => !DEFAULT_PRESETS.some((base) => base.id === item.id))));
       selectPreset(generated);
       setAiPrompt('');
       setToast(t('presetSaved'));
+      log(`AI preset created with ${provider.name}.`);
     } catch (error: any) {
       setAiError(error?.message || t('error'));
+      log(`AI provider error: ${error?.message || 'unknown error'}`);
     } finally {
       setAiGenerating(false);
     }
@@ -415,7 +451,7 @@ export default function PresetStudio() {
                   <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPresets')} className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-cyan-300/60" /></div><div className="flex gap-1 overflow-x-auto">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${category === item ? 'bg-cyan-300 text-[#0b1020]' : 'bg-white/5 text-slate-400 hover:text-white'}`}>{t(categoryKey[item])}</button>)}</div></div></div>
                   <div className="grid gap-3 md:grid-cols-2">{filteredPresets.map((preset) => <button key={preset.id} onClick={() => selectPreset(preset)} className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${activePreset.id === preset.id ? 'border-cyan-300/70 bg-cyan-300/10' : 'border-white/10 bg-[#111a30] hover:border-white/25'}`}><div className="mb-2 flex items-start justify-between gap-3"><span className="font-medium text-white">{preset.name}</span>{activePreset.id === preset.id && <Check className="h-4 w-4 shrink-0 text-cyan-200" />}</div><p className="mb-4 text-xs leading-relaxed text-slate-400">{preset.description}</p><div className="flex items-center gap-2 text-[11px] text-slate-500"><span className="rounded-md bg-black/20 px-2 py-1 uppercase text-cyan-100">{preset.settings.format}</span><span>{preset.settings.resolution} · {preset.settings.fps} FPS</span></div></button>)}</div>
                   {!filteredPresets.length && <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-slate-500">{t('noResults')}<br />{t('tryAnother')}</div>}
-                  <div className="rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 to-cyan-300/5 p-5"><div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-indigo-200" />{t('aiTitle')}</div><div className="flex flex-col gap-2 sm:flex-row"><input value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generatePreset()} placeholder={t('aiHint')} className="flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-indigo-300/70" /><button disabled={aiGenerating || !aiPrompt.trim()} onClick={generatePreset} className="rounded-xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{aiGenerating ? t('generating') : t('generate')}<Wand2 className="ml-2 inline h-4 w-4" /></button></div>{aiError && <p className="mt-3 text-xs text-rose-300"><AlertCircle className="mr-1 inline h-4 w-4" />{aiError}</p>}</div>
+                  <div className="rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 to-cyan-300/5 p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-indigo-200" />{t('aiTitle')}</div><button onClick={() => setPanel('settings')} className="rounded-lg border border-indigo-300/20 px-2.5 py-1 text-[11px] text-indigo-100 hover:bg-indigo-300/10">{t('aiPoweredBy')} {getAIProvider(settings.aiProvider).name} · {settings.aiModel}</button></div><div className="flex flex-col gap-2 sm:flex-row"><input value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generatePreset()} placeholder={t('aiHint')} className="flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-indigo-300/70" /><button disabled={aiGenerating || !aiPrompt.trim()} onClick={generatePreset} className="rounded-xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{aiGenerating ? t('generating') : t('generate')}<Wand2 className="ml-2 inline h-4 w-4" /></button></div>{aiError && <p className="mt-3 text-xs text-rose-300"><AlertCircle className="mr-1 inline h-4 w-4" />{aiError}</p>}</div>
                   <div className="flex justify-between"><button onClick={() => setStep(0)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button onClick={() => setStep(2)} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
                 </section>}
 
@@ -433,12 +469,12 @@ export default function PresetStudio() {
           </div>
         </section>
 
-        <footer className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#111a30] p-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-2"><span className={`h-2 w-2 rounded-full ${typeof navigator !== 'undefined' && navigator.onLine ? 'bg-cyan-300' : 'bg-amber-300'}`} />{typeof navigator !== 'undefined' && navigator.onLine ? t('online') : t('offline')} · {t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')}</div><button onClick={() => setShowDiagnostics((value) => !value)} className="text-left hover:text-slate-300">{t('diagnostics')} <ChevronDown className="ml-1 inline h-3.5 w-3.5" /></button></footer>
+        <footer className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#111a30] p-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap items-center gap-2"><span className={`h-2 w-2 rounded-full ${typeof navigator !== 'undefined' && navigator.onLine ? 'bg-cyan-300' : 'bg-amber-300'}`} />{typeof navigator !== 'undefined' && navigator.onLine ? t('online') : t('offline')} · {t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')} · AI: {getAIProvider(settings.aiProvider).name} / {settings.aiModel}</div><button onClick={() => setShowDiagnostics((value) => !value)} className="text-left hover:text-slate-300">{t('diagnostics')} <ChevronDown className="ml-1 inline h-3.5 w-3.5" /></button></footer>
         {showDiagnostics && <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4 font-mono text-[11px] text-slate-500"><div className="mb-2 flex justify-between"><span>{logs.length} events</span><button onClick={() => setLogs([])}>{t('clear')}</button></div>{logs.map((item, index) => <div key={`${item}-${index}`} className="border-l border-cyan-300/20 py-0.5 pl-2">{item}</div>)}</div>}
       </div>
 
       <AnimatePresence>
-        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } })} /><motion.aside className="fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { type: 'spring', damping: 28, stiffness: 260 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onClear={() => { localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
+        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } })} /><motion.aside className="fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { type: 'spring', damping: 28, stiffness: 260 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
       <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-cyan-300/30 bg-[#14213d] px-4 py-3 text-sm text-cyan-100 shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 12 } })}>{toast}</motion.div>}</AnimatePresence>
     </main>
@@ -452,12 +488,4 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Guide({ t }: { t: (key: TranslationKey) => string }) {
   const cards = [['guideImport', 'guideImportBody', FileVideo], ['guidePreset', 'guidePresetBody', Layers3], ['guideEngine', 'guideEngineBody', Cpu], ['guideExport', 'guideExportBody', Download]] as const;
   return <div className="space-y-4"><p className="text-sm leading-relaxed text-slate-400">{t('guideIntro')}</p>{cards.map(([title, body, Icon]) => <div key={title} className="rounded-2xl border border-white/10 bg-black/15 p-4"><Icon className="mb-3 h-5 w-5 text-cyan-200" /><h3 className="mb-1 text-sm font-semibold text-white">{t(title as TranslationKey)}</h3><p className="text-xs leading-relaxed text-slate-400">{t(body as TranslationKey)}</p></div>)}<div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/5 p-4"><ShieldCheck className="mb-3 h-5 w-5 text-cyan-200" /><h3 className="mb-1 text-sm font-semibold text-white">{t('guidePrivacy')}</h3><p className="text-xs leading-relaxed text-slate-400">{t('guidePrivacyBody')}</p></div></div>;
-}
-
-function SettingsPanel({ t, settings, ffmpeg, ffmpegLoading, ffmpegError, onUpdate, onLoad, onClear }: { t: (key: TranslationKey) => string; settings: AppSettings; ffmpeg: any; ffmpegLoading: boolean; ffmpegError: string; onUpdate: (patch: Partial<AppSettings>) => void; onLoad: () => void; onClear: () => void }) {
-  return <div className="space-y-6"><div><h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('general')}</h3><div className="space-y-3 rounded-2xl border border-white/10 bg-black/15 p-4"><div className="flex items-center justify-between gap-4"><span className="text-sm text-slate-300">{t('language')}</span><div className="flex rounded-lg bg-black/20 p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => onUpdate({ locale: item })} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${settings.locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}</div></div><SettingSelect label={t('theme')} value={settings.theme} options={[['system', t('system')], ['dark', t('dark')], ['light', t('light')]]} onChange={(value) => onUpdate({ theme: value as AppSettings['theme'] })} /><SettingSelect label={t('motion')} value={settings.motion} options={[['system', t('system')], ['full', t('fullMotion')], ['reduced', t('reducedMotion')]]} onChange={(value) => onUpdate({ motion: value as AppSettings['motion'] })} /></div></div><div><h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('processingSettings')}</h3><div className="space-y-3 rounded-2xl border border-white/10 bg-black/15 p-4"><SettingSelect label={t('defaultEngine')} value={settings.defaultEngine} options={[['native', t('nativeEngine')], ['ffmpeg', t('ffmpegEngine')]]} onChange={(value) => onUpdate({ defaultEngine: value as AppSettings['defaultEngine'] })} /><div className="flex items-center justify-between gap-4"><span className="text-sm text-slate-300">{t('loadFfmpeg')}</span><button disabled={ffmpegLoading || Boolean(ffmpeg)} onClick={onLoad} className="rounded-lg bg-cyan-300 px-3 py-2 text-xs font-semibold text-[#0b1020] disabled:opacity-40">{ffmpeg ? t('compilerLoaded') : ffmpegLoading ? t('processing') : t('loadFfmpegButton')}</button></div>{ffmpegError && <p className="text-xs text-rose-300">{ffmpegError}</p>}</div></div><div><h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('storage')}</h3><div className="rounded-2xl border border-white/10 bg-black/15 p-4"><button onClick={onClear} className="w-full rounded-xl border border-rose-300/20 px-3 py-2.5 text-left text-sm text-rose-200 hover:bg-rose-300/10">{t('clearPresets')}</button></div></div><div className="border-t border-white/10 pt-5 text-xs text-slate-500"><div className="flex justify-between"><span>{t('version')}</span><span className="text-slate-300">0.2.0</span></div><div className="mt-2 flex justify-between"><span>{t('build')}</span><span className="font-mono text-slate-400">local</span></div></div></div>;
-}
-
-function SettingSelect({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
-  return <label className="flex items-center justify-between gap-4 text-sm text-slate-300"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 text-xs text-white outline-none">{options.map(([option, labelText]) => <option key={option} value={option}>{labelText}</option>)}</select></label>;
 }

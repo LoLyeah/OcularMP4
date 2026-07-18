@@ -5,6 +5,7 @@ const version = packageJson.version;
 const files = [
   ['public/sw.js', `APP_VERSION = '${version}'`],
   ['public/manifest.json', '"short_name": "Encode.Core"'],
+  ['components/settings-panel.tsx', `>${version}<`],
 ];
 
 for (const [file, marker] of files) {
