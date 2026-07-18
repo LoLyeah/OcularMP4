@@ -5,7 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown,
+  AlertCircle, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, CheckCircle2, ChevronDown,
   CircleHelp, Clock3, Cpu, Download, FileVideo, FolderOpen, Layers3, Menu,
   Heart, History, Pencil, Search, Settings2, ShieldCheck, Sparkles, Tag, Trash2, Upload, Volume2, VolumeX,
   Wand2, X, Pause, Play, RotateCcw
@@ -20,7 +20,7 @@ import {
 } from '../lib/preset-workspace';
 import { SettingsPanel } from '../components/settings-panel';
 import {
-  QUEUE_RECOVERY_KEY, createTempNames, getPreflightIssues, recoverQueueSnapshot, validateFfmpegArgs,
+  QUEUE_RECOVERY_KEY, createTempNames, estimateOutputBytes, getPreflightIssues, recoverQueueSnapshot, validateFfmpegArgs,
   type RecoverableQueueJob,
 } from '../lib/conversion-reliability';
 
@@ -73,6 +73,10 @@ type QueueStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled
 interface QueueJob {
   id: string;
   file: File;
+  preset: Preset;
+  duration: number;
+  trimStart: number;
+  trimEnd: number;
   status: QueueStatus;
   progress: number;
   outputUrl?: string;
@@ -111,6 +115,7 @@ export default function PresetStudio() {
   const [step, setStep] = useState(0);
   const [toast, setToast] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueJob[]>([]);
   const [recoveredJobs, setRecoveredJobs] = useState<RecoverableQueueJob[]>([]);
   const cancelQueueRef = useRef(false);
@@ -166,6 +171,25 @@ export default function PresetStudio() {
   const [customVbitrate, setCustomVbitrate] = useState(activePreset.settings.vbitrate);
   const [customAudioEnabled, setCustomAudioEnabled] = useState(activePreset.settings.audioEnabled);
   const [customArgs, setCustomArgs] = useState(activePreset.ffmpegArgs.join(' '));
+  const configuredPreset = useMemo<Preset>(() => ({
+    ...activePreset,
+    ffmpegArgs: customArgs.split(/\s+/).filter(Boolean),
+    settings: {
+      ...activePreset.settings,
+      format: customFormat,
+      vcodec: customVcodec,
+      acodec: customAcodec,
+      resolution: customResolution,
+      fps: customFps,
+      vbitrate: customVbitrate,
+      audioEnabled: customAudioEnabled,
+    },
+  }), [activePreset, customAcodec, customArgs, customAudioEnabled, customFormat, customFps, customResolution, customVbitrate, customVcodec]);
+
+  useEffect(() => {
+    if (!selectedJobId) return;
+    setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, preset: configuredPreset } : job));
+  }, [configuredPreset, selectedJobId]);
 
   useEffect(() => {
     if (!panel) return;
@@ -356,13 +380,15 @@ export default function PresetStudio() {
     const file = job.file;
     if (fileUrl) URL.revokeObjectURL(fileUrl);
     const url = URL.createObjectURL(file);
+    setSelectedJobId(job.id);
     setSelectedFile(file);
     setFileUrl(url);
     setOutputUrl('');
     setOutputName('');
-    setDuration(0);
-    setTrimStart(0);
-    setTrimEnd(0);
+    setDuration(job.duration);
+    setTrimStart(job.trimStart);
+    setTrimEnd(job.trimEnd);
+    selectPreset(job.preset);
     setStep(0);
     log(`Selected ${file.name}`);
   };
@@ -370,7 +396,16 @@ export default function PresetStudio() {
   const addFiles = (files: File[] | FileList) => {
     const incoming = Array.from(files).filter((file) => file.type.startsWith('video/') || file.type.startsWith('audio/'));
     if (!incoming.length) return;
-    const jobs = incoming.map((file) => ({ id: uniqueId('job'), file, status: 'queued' as QueueStatus, progress: 0 }));
+    const jobs: QueueJob[] = incoming.map((file) => ({
+      id: uniqueId('job'),
+      file,
+      preset: configuredPreset,
+      duration: 0,
+      trimStart: 0,
+      trimEnd: 0,
+      status: 'queued',
+      progress: 0,
+    }));
     setQueue((current) => [...current, ...jobs]);
     setRecoveredJobs((current) => current.filter((job) => !incoming.some((file) => file.name === job.fileName && file.size === job.fileSize)));
     if (!selectedFile) selectQueueJob(jobs[0]);
@@ -384,7 +419,16 @@ export default function PresetStudio() {
   const handleMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     const length = Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0;
     setDuration(length);
-    setTrimEnd(length);
+    const selectedJob = queue.find((job) => job.id === selectedJobId);
+    const nextEnd = selectedJob?.trimEnd || length;
+    setTrimEnd(nextEnd);
+    if (selectedJobId) {
+      setQueue((current) => current.map((job) => job.id === selectedJobId ? {
+        ...job,
+        duration: length,
+        trimEnd: job.trimEnd || length,
+      } : job));
+    }
   };
 
   const selectAndContinue = () => {
@@ -491,7 +535,13 @@ export default function PresetStudio() {
     setToast(t('presetSaved'));
   };
 
-  const transcodeFile = async (workingFile: File, jobId?: string) => {
+  const transcodeFile = async (workingFile: File, job?: QueueJob) => {
+    const jobId = job?.id;
+    const jobPreset = job?.preset || configuredPreset;
+    const jobDuration = job?.duration || duration;
+    const jobTrimStart = job?.trimStart ?? trimStart;
+    const jobTrimEnd = job?.trimEnd || jobDuration;
+    const jobSettings = jobPreset.settings;
     setProgress(0);
     setOutputUrl('');
     const started = Date.now();
@@ -500,53 +550,55 @@ export default function PresetStudio() {
       if (engine === 'ffmpeg') {
         if (!ffmpeg) throw new Error('Load FFmpeg.wasm first.');
         const { fetchFile } = await import('@ffmpeg/util');
-        const names = createTempNames(workingFile.name, customFormat, jobId || uniqueId('single'));
+        const names = createTempNames(workingFile.name, jobSettings.format, jobId || uniqueId('single'));
         const inputName = names.inputName;
         const output = names.outputName;
         temporaryFiles.push(inputName, output);
         await ffmpeg.writeFile(inputName, await fetchFile(workingFile));
-        const args = ['-ss', trimStart.toFixed(3), '-to', (trimEnd || duration).toFixed(3), '-i', inputName, ...customArgs.split(/\s+/).filter(Boolean), output];
+        const args = ['-ss', jobTrimStart.toFixed(3), '-to', jobTrimEnd.toFixed(3), '-i', inputName, ...jobPreset.ffmpegArgs, output];
         await ffmpeg.exec(args);
         const data = await ffmpeg.readFile(output);
-        const blob = new Blob([data], { type: getMimeType(customFormat) });
-        setOutputUrl(URL.createObjectURL(blob));
+        const blob = new Blob([data], { type: getMimeType(jobSettings.format) });
+        const resultUrl = URL.createObjectURL(blob);
+        setOutputUrl(resultUrl);
         const outputFileName = names.downloadName;
         setOutputName(outputFileName);
         setOutputSize(formatBytes(blob.size));
-        if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
-        recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: activePreset.name, preset: activePreset });
+        if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, status: 'completed', progress: 100, outputUrl: resultUrl, outputName: outputFileName, outputSize: formatBytes(blob.size) } : item));
+        recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: jobPreset.name, preset: jobPreset });
       } else {
         const video = videoRef.current;
         const canvas = canvasRef.current;
         if (!video || !canvas) throw new Error('Preview canvas unavailable.');
-        const width = customResolution === '1080p' ? 1920 : customResolution === '720p' ? 1280 : customResolution === '480p' ? 854 : customResolution === '360p' ? 640 : video.videoWidth;
-        const height = customResolution === '1080p' ? 1080 : customResolution === '720p' ? 720 : customResolution === '480p' ? 480 : customResolution === '360p' ? 360 : video.videoHeight;
+        const width = jobSettings.resolution === '1080p' ? 1920 : jobSettings.resolution === '720p' ? 1280 : jobSettings.resolution === '480p' ? 854 : jobSettings.resolution === '360p' ? 640 : video.videoWidth;
+        const height = jobSettings.resolution === '1080p' ? 1080 : jobSettings.resolution === '720p' ? 720 : jobSettings.resolution === '480p' ? 480 : jobSettings.resolution === '360p' ? 360 : video.videoHeight;
         canvas.width = width || 1280;
         canvas.height = height || 720;
-        const stream = canvas.captureStream(customFps);
-        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus', videoBitsPerSecond: getBitrateValue(customVbitrate) });
+        const stream = canvas.captureStream(jobSettings.fps);
+        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus', videoBitsPerSecond: getBitrateValue(jobSettings.vbitrate) });
         const chunks: Blob[] = [];
         recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
         const finished = new Promise<void>((resolve) => {
           recorder.onstop = () => {
             const blob = new Blob(chunks, { type: 'video/webm' });
-            setOutputUrl(URL.createObjectURL(blob));
+            const resultUrl = URL.createObjectURL(blob);
+            setOutputUrl(resultUrl);
             const outputFileName = `converted_${workingFile.name.replace(/\.[^/.]+$/, '')}.webm`;
             setOutputName(outputFileName);
             setOutputSize(formatBytes(blob.size));
-            if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
-            recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: activePreset.name, preset: activePreset });
+            if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, status: 'completed', progress: 100, outputUrl: resultUrl, outputName: outputFileName, outputSize: formatBytes(blob.size) } : item));
+            recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: jobPreset.name, preset: jobPreset });
             resolve();
           };
         });
-        video.currentTime = trimStart;
+        video.currentTime = jobTrimStart;
         await new Promise((resolve) => window.setTimeout(resolve, 250));
         recorder.start();
         await video.play();
         const draw = () => {
-          if (video.currentTime < (trimEnd || duration)) {
+          if (video.currentTime < jobTrimEnd) {
             canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
-            setProgress(Math.min(99, Math.round(((video.currentTime - trimStart) / Math.max(0.1, (trimEnd || duration) - trimStart)) * 100)));
+            setProgress(Math.min(99, Math.round(((video.currentTime - jobTrimStart) / Math.max(0.1, jobTrimEnd - jobTrimStart)) * 100)));
             requestAnimationFrame(draw);
           } else {
             video.pause();
@@ -564,8 +616,8 @@ export default function PresetStudio() {
       }
     } catch (error: any) {
       const cancelled = cancelQueueRef.current;
-      if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: cancelled ? 'cancelled' : 'failed', error: cancelled ? undefined : error?.message || t('error') } : job));
-      recordConversion({ fileName: workingFile.name, status: cancelled ? 'cancelled' : 'failed', engine, presetName: activePreset.name, preset: activePreset, error: cancelled ? undefined : error?.message || t('error') });
+      if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, status: cancelled ? 'cancelled' : 'failed', error: cancelled ? undefined : error?.message || t('error') } : item));
+      recordConversion({ fileName: workingFile.name, status: cancelled ? 'cancelled' : 'failed', engine, presetName: jobPreset.name, preset: jobPreset, error: cancelled ? undefined : error?.message || t('error') });
       if (!cancelled) setToast(error?.message || t('error'));
     } finally {
       if (ffmpeg && temporaryFiles.length) {
@@ -576,7 +628,16 @@ export default function PresetStudio() {
 
   const handleTranscode = async () => {
     if (!selectedFile || !videoRef.current) return;
-    const ffmpegArgs = customArgs.split(/\s+/).filter(Boolean);
+    const jobs: QueueJob[] = queue.length ? queue : [{
+      id: uniqueId('job'),
+      file: selectedFile,
+      preset: configuredPreset,
+      duration,
+      trimStart,
+      trimEnd: trimEnd || duration,
+      status: 'queued',
+      progress: 0,
+    }];
     const issues = getPreflightIssues({
       capabilities: {
         webAssembly: typeof WebAssembly !== 'undefined',
@@ -584,9 +645,9 @@ export default function PresetStudio() {
         canvasCapture: typeof HTMLCanvasElement !== 'undefined' && 'captureStream' in HTMLCanvasElement.prototype,
       },
       engine,
-      queueLength: Math.max(1, queue.length),
-      fileSize: Math.max(selectedFile.size, ...queue.map((job) => job.file.size)),
-      args: ffmpegArgs,
+      queueLength: jobs.length,
+      fileSize: Math.max(...jobs.map((job) => job.file.size)),
+      args: [],
     });
     const issueMessages: Record<string, TranslationKey> = {
       'webassembly-unavailable': 'preflightWebAssembly',
@@ -599,12 +660,16 @@ export default function PresetStudio() {
       setToast(t(issueMessages[issues[0]] || 'error'));
       return;
     }
-    validateFfmpegArgs(ffmpegArgs);
+    try {
+      jobs.forEach((job) => validateFfmpegArgs(job.preset.ffmpegArgs));
+    } catch {
+      setToast(t('preflightUnsafeArgs'));
+      return;
+    }
     setTranscoding(true);
     cancelQueueRef.current = false;
     pauseQueueRef.current = false;
     setQueuePaused(false);
-    const jobs = queue.length ? queue : [{ id: uniqueId('job'), file: selectedFile, status: 'queued' as QueueStatus, progress: 0 }];
     if (!queue.length) setQueue(jobs);
     for (const job of jobs) {
       if (cancelQueueRef.current) break;
@@ -615,7 +680,7 @@ export default function PresetStudio() {
       if (cancelQueueRef.current) break;
       setQueue((current) => current.map((item) => item.id === job.id ? { ...item, status: 'processing', progress: 0, error: undefined } : item));
       setSelectedFile(job.file);
-      await transcodeFile(job.file, job.id);
+      await transcodeFile(job.file, job);
     }
     setTranscoding(false);
     if (!cancelQueueRef.current) {
@@ -648,10 +713,39 @@ export default function PresetStudio() {
     setToast(t('jobQueued'));
   };
 
+  const updateJobPreset = (job: QueueJob, presetId: string) => {
+    const preset = presets.find((item) => item.id === presetId);
+    if (!preset) return;
+    setQueue((current) => current.map((item) => item.id === job.id ? { ...item, preset } : item));
+    if (selectedJobId === job.id) selectPreset(preset);
+  };
+
+  const moveJob = (jobId: string, direction: -1 | 1) => {
+    setQueue((current) => {
+      const index = current.findIndex((job) => job.id === jobId);
+      const destination = index + direction;
+      if (index < 0 || destination < 0 || destination >= current.length) return current;
+      const next = [...current];
+      [next[index], next[destination]] = [next[destination], next[index]];
+      return next;
+    });
+  };
+
+  const getJobEstimate = (job: QueueJob) => formatBytes(estimateOutputBytes({
+    sourceSize: job.file.size,
+    duration: job.duration,
+    trimStart: job.trimStart,
+    trimEnd: job.trimEnd,
+    videoBitrate: job.preset.settings.vcodec === 'none' ? 'none' : job.preset.settings.vbitrate,
+    audioBitrate: job.preset.settings.abitrate,
+    audioEnabled: job.preset.settings.audioEnabled,
+  }));
+
   const removeJob = (job: QueueJob) => {
     if (job.outputUrl) URL.revokeObjectURL(job.outputUrl);
     setQueue((current) => current.filter((item) => item.id !== job.id));
     if (selectedFile === job.file) {
+      setSelectedJobId(null);
       setSelectedFile(null);
       setFileUrl('');
     }
@@ -659,6 +753,11 @@ export default function PresetStudio() {
 
   const clearCompletedJobs = () => {
     queue.filter((job) => job.status === 'completed').forEach((job) => job.outputUrl && URL.revokeObjectURL(job.outputUrl));
+    if (queue.some((job) => job.id === selectedJobId && job.status === 'completed')) {
+      setSelectedJobId(null);
+      setSelectedFile(null);
+      setFileUrl('');
+    }
     setQueue((current) => current.filter((job) => job.status !== 'completed'));
   };
 
@@ -710,7 +809,7 @@ export default function PresetStudio() {
             <AnimatePresence mode="wait">
               <motion.div key={step} {...motionProps}>
                 {step === 0 && <section className="space-y-5">
-                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="dropzone group cursor-pointer rounded-3xl border border-dashed border-white/15 p-8 text-center transition sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition duration-300 group-hover:scale-110 group-hover:rotate-2"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mx-auto mb-6 max-w-[52ch] text-sm leading-6 text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="dropzone group cursor-pointer rounded-3xl border border-dashed border-white/15 p-8 text-center transition sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition duration-300 group-hover:scale-110 group-hover:rotate-2"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mx-auto mb-6 max-w-[52ch] text-sm leading-6 text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedJobId(null); setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
                   {recoveredJobs.length > 0 && <div className="rounded-2xl border border-amber-300/20 bg-amber-300/5 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><AlertCircle className="h-4 w-4" />{t('interruptedQueue')}</div><p className="mt-1 text-xs text-slate-400">{t('interruptedQueueBody')} ({recoveredJobs.map((job) => job.fileName).join(', ')})</p></div><div className="flex gap-2"><button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-amber-200 px-3 py-2 text-xs font-semibold text-[#0b1020]">{t('chooseFilesAgain')}</button><button onClick={() => { setRecoveredJobs([]); localStorage.removeItem(QUEUE_RECOVERY_KEY); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300">{t('dismiss')}</button></div></div></div>}
                   {queue.length > 0 && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -723,9 +822,34 @@ export default function PresetStudio() {
                         </> : <button onClick={() => fileInputRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
                       </div>
                     </div>
-                    <div aria-live="polite" aria-busy={transcoding} className="space-y-2">{queue.map((job) => <div key={job.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-black/15 p-3"><button onClick={() => selectQueueJob(job)} className="min-w-0 flex-1 text-left"><div className="truncate text-xs font-medium text-white">{job.file.name}</div><div className="mt-1 text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</div></button>{job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="rounded-md p-1.5 text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}{job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="rounded-md p-1.5 text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}{job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}</div>)}</div>
+                    <div aria-live="polite" aria-busy={transcoding} className="space-y-2">
+                      {queue.map((job, index) => <div key={job.id} className={`rounded-xl border p-3 transition ${selectedJobId === job.id ? 'border-cyan-300/30 bg-cyan-300/5' : 'border-white/5 bg-black/15'}`}>
+                        <div className="flex items-start gap-3">
+                          <button onClick={() => selectQueueJob(job)} className="min-w-0 flex-1 text-left">
+                            <div className="truncate text-xs font-medium text-white">{job.file.name}</div>
+                            <div className="mt-1 text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</div>
+                          </button>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button disabled={transcoding || index === 0} onClick={() => moveJob(job.id, -1)} aria-label={t('moveUp')} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-3.5 w-3.5" /></button>
+                            <button disabled={transcoding || index === queue.length - 1} onClick={() => moveJob(job.id, 1)} aria-label={t('moveDown')} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-3.5 w-3.5" /></button>
+                            {job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="rounded-md p-1.5 text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}
+                            {job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="rounded-md p-1.5 text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}
+                            {job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}
+                          </div>
+                        </div>
+                        <div className="mt-3 grid gap-2 border-t border-white/5 pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                          <label className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                            {t('jobPreset')}
+                            <select value={job.preset.id} disabled={transcoding || job.status === 'processing'} onChange={(event) => updateJobPreset(job, event.target.value)} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#0b1020] px-2.5 py-2 text-xs normal-case tracking-normal text-slate-200 outline-none focus:border-cyan-300/60 disabled:opacity-50">
+                              {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+                            </select>
+                          </label>
+                          <div className="text-[11px] text-slate-500">{t('estimatedOutput')}: <span className="text-slate-300">{getJobEstimate(job)}</span></div>
+                        </div>
+                      </div>)}
+                    </div>
                   </div>}
-                  {selectedFile && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-cyan-200" />{t('trim')}</div><span className="rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">{trimStart.toFixed(1)}s – {(trimEnd || duration).toFixed(1)}s</span></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs text-slate-400">{t('start')}<input aria-label={t('start')} type="range" min="0" max={duration || 1} step="0.1" value={trimStart} onChange={(event) => setTrimStart(Math.min(Number(event.target.value), Math.max(0, (trimEnd || duration) - 0.1)))} className="mt-3 w-full accent-cyan-300" /></label><label className="text-xs text-slate-400">{t('end')}<input aria-label={t('end')} type="range" min="0" max={duration || 1} step="0.1" value={trimEnd || duration} onChange={(event) => setTrimEnd(Math.max(Number(event.target.value), trimStart + 0.1))} className="mt-3 w-full accent-indigo-400" /></label></div></div>}
+                  {selectedFile && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-cyan-200" />{t('trim')}</div><span className="rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">{trimStart.toFixed(1)}s – {(trimEnd || duration).toFixed(1)}s</span></div><div className="grid gap-4 sm:grid-cols-2"><label className="text-xs text-slate-400">{t('start')}<input aria-label={t('start')} type="range" min="0" max={duration || 1} step="0.1" value={trimStart} onChange={(event) => { const value = Math.min(Number(event.target.value), Math.max(0, (trimEnd || duration) - 0.1)); setTrimStart(value); if (selectedJobId) setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, trimStart: value } : job)); }} className="mt-3 w-full accent-cyan-300" /></label><label className="text-xs text-slate-400">{t('end')}<input aria-label={t('end')} type="range" min="0" max={duration || 1} step="0.1" value={trimEnd || duration} onChange={(event) => { const value = Math.max(Number(event.target.value), trimStart + 0.1); setTrimEnd(value); if (selectedJobId) setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, trimEnd: value } : job)); }} className="mt-3 w-full accent-indigo-400" /></label></div></div>}
                   <div className="flex justify-end"><button onClick={selectAndContinue} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] transition hover:bg-cyan-200">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
                 </section>}
 

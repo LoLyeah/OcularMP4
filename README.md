@@ -28,8 +28,8 @@ arguments.
 - Generates validated encoding presets from natural-language requests using a
   configured AI provider
 - Keeps up to 30 AI generations in local history for reuse
-- Adds a multi-file conversion queue with sequential processing, per-job status,
-  retry, cancel, and individual downloads
+- Adds a multi-file conversion queue with per-file presets and trim ranges,
+  ordering controls, output-size estimates, retry, cancel, and downloads
 - Keeps a private local conversion history with engine, preset, result metadata,
   failure details, and one-click preset reuse
 - Detects interrupted queues, runs capability and FFmpeg-argument preflight
@@ -54,9 +54,9 @@ The native engine does not honor the selected container, codec, audio setting,
 or custom FFmpeg arguments; its output is WebM video. Load and select
 FFmpeg.wasm when the exact preset output matters.
 
-When multiple files are queued, FFmpeg.wasm processes them sequentially with
-the selected preset. The lightweight native engine remains available for
-single-file conversions.
+When multiple files are queued, FFmpeg.wasm processes them sequentially using
+the preset and trim range saved on each job. The lightweight native engine
+remains available for single-file conversions.
 
 FFmpeg is loaded on demand from `unpkg.com` using `@ffmpeg/core` 0.12.6. The
 first load therefore requires network access. The service worker caches the
@@ -206,7 +206,7 @@ presets.
 
 ## Versioning
 
-The current application version is `0.8.0`. OcularMP4 follows Semantic
+The current application version is `0.9.0`. OcularMP4 follows Semantic
 Versioning and uses Conventional Commit messages and `vX.Y.Z` release tags.
 
 When releasing a new version, update the version in `package.json` and

@@ -179,6 +179,10 @@ export const translations = {
     completed: 'Completed',
     failed: 'Failed',
     cancelled: 'Cancelled',
+    jobPreset: 'Preset for this file',
+    estimatedOutput: 'Estimated output',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
   },
   id: {
     appName: 'OcularMP4',
@@ -356,6 +360,10 @@ export const translations = {
     completed: 'Selesai',
     failed: 'Gagal',
     cancelled: 'Dibatalkan',
+    jobPreset: 'Preset untuk file ini',
+    estimatedOutput: 'Perkiraan hasil',
+    moveUp: 'Pindah ke atas',
+    moveDown: 'Pindah ke bawah',
   },
 } as const;
 

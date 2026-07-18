@@ -15,6 +15,40 @@ export interface PreflightCapabilities {
 
 export const QUEUE_RECOVERY_KEY = 'ocularmp4.queue-recovery.v1';
 
+function parseBitrate(value: string) {
+  if (value === 'auto') return null;
+  if (value === 'none') return 0;
+  const amount = Number.parseFloat(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (value.toLowerCase().endsWith('m')) return amount * 1_000_000;
+  if (value.toLowerCase().endsWith('k')) return amount * 1_000;
+  return amount;
+}
+
+export function estimateOutputBytes(options: {
+  sourceSize: number;
+  duration: number;
+  trimStart: number;
+  trimEnd: number;
+  videoBitrate: string;
+  audioBitrate: string;
+  audioEnabled: boolean;
+}) {
+  if (options.duration <= 0) return Math.max(1, options.sourceSize);
+  const clipEnd = options.trimEnd || options.duration;
+  const clipDuration = Math.max(0, clipEnd - options.trimStart);
+  const sourceRatio = options.duration > 0 ? Math.min(1, clipDuration / options.duration) : 1;
+  const videoBitrate = parseBitrate(options.videoBitrate);
+  const audioBitrate = options.audioEnabled ? parseBitrate(options.audioBitrate) : 0;
+
+  if (videoBitrate === null) {
+    return Math.max(1, Math.round(options.sourceSize * sourceRatio));
+  }
+
+  const totalBitrate = videoBitrate + (audioBitrate || 0);
+  return Math.max(1, Math.round((totalBitrate * clipDuration) / 8));
+}
+
 export function validateFfmpegArgs(args: string[]) {
   const unsafe = args.find((arg) =>
     arg === '-i'

@@ -255,7 +255,7 @@ export function SettingsPanel({
       </section>
 
       <div className="border-t border-white/10 pt-5 text-xs text-slate-500">
-        <div className="flex justify-between"><span>{t('version')}</span><span className="text-slate-300">0.8.0</span></div>
+        <div className="flex justify-between"><span>{t('version')}</span><span className="text-slate-300">0.9.0</span></div>
         <div className="mt-2 flex justify-between"><span>{t('build')}</span><span className="font-mono text-slate-400">provider-milestone</span></div>
       </div>
     </div>

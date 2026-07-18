@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTempNames, getPreflightIssues, recoverQueueSnapshot, safeFileStem, validateFfmpegArgs } from '../lib/conversion-reliability.ts';
+import { createTempNames, estimateOutputBytes, getPreflightIssues, recoverQueueSnapshot, safeFileStem, validateFfmpegArgs } from '../lib/conversion-reliability.ts';
 
 test('sanitizes download and temporary filenames', () => {
   assert.equal(safeFileStem('../../My holiday (final).mp4'), 'My_holiday_final');
@@ -42,4 +42,26 @@ test('marks active jobs as interrupted after reload', () => {
     status: 'interrupted',
     error: 'Conversion was interrupted by a reload.',
   }]);
+});
+
+test('estimates output size from each job bitrate and trim range', () => {
+  assert.equal(estimateOutputBytes({
+    sourceSize: 50_000_000,
+    duration: 100,
+    trimStart: 10,
+    trimEnd: 30,
+    videoBitrate: '1m',
+    audioBitrate: '128k',
+    audioEnabled: true,
+  }), 2_820_000);
+
+  assert.equal(estimateOutputBytes({
+    sourceSize: 50_000_000,
+    duration: 100,
+    trimStart: 10,
+    trimEnd: 30,
+    videoBitrate: 'auto',
+    audioBitrate: '128k',
+    audioEnabled: true,
+  }), 10_000_000);
 });
