@@ -145,6 +145,12 @@ export const translations = {
     clearHistory: 'Clear history',
     historyEmpty: 'No AI generations yet.',
     historyRestored: 'Preset restored from history.',
+    renamePreset: 'Rename preset',
+    renamePresetPrompt: 'Enter a new preset name',
+    presetRenamed: 'Preset renamed.',
+    editTags: 'Edit tags',
+    tagsPrompt: 'Enter comma-separated tags',
+    tagsUpdated: 'Preset tags updated.',
   },
   id: {
     appName: 'Encode.Core',
@@ -288,6 +294,12 @@ export const translations = {
     clearHistory: 'Hapus riwayat',
     historyEmpty: 'Belum ada hasil AI.',
     historyRestored: 'Preset dipulihkan dari riwayat.',
+    renamePreset: 'Ubah nama preset',
+    renamePresetPrompt: 'Masukkan nama preset baru',
+    presetRenamed: 'Nama preset diubah.',
+    editTags: 'Edit tag',
+    tagsPrompt: 'Masukkan tag yang dipisahkan koma',
+    tagsUpdated: 'Tag preset diperbarui.',
   },
 } as const;
 

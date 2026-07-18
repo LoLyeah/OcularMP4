@@ -57,7 +57,11 @@ export function readStoredPresets(defaults: Preset[]): Preset[] {
     const parsed = JSON.parse(raw || '[]');
     if (!Array.isArray(parsed)) return defaults;
     const stored = parsed.map((item) => cleanPreset(item, item?.source === 'ai' ? 'ai' : 'custom'));
-    return [...defaults, ...stored.filter((item) => !defaults.some((base) => base.id === item.id))];
+    const mergedDefaults = defaults.map((base) => {
+      const metadata = stored.find((item) => item.id === base.id);
+      return metadata ? { ...base, favorite: metadata.favorite, tags: metadata.tags } : base;
+    });
+    return [...mergedDefaults, ...stored.filter((item) => !defaults.some((base) => base.id === item.id))];
   } catch {
     return defaults;
   }
@@ -65,10 +69,10 @@ export function readStoredPresets(defaults: Preset[]): Preset[] {
 
 export function writeStoredPresets(presets: Preset[], defaults: Preset[]) {
   if (typeof window === 'undefined') return;
-  const custom = presets
-    .filter((item) => !defaults.some((base) => base.id === item.id))
-    .map((item) => ({ ...item, source: item.source || 'custom' }));
-  localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(custom));
+  const stored = presets
+    .filter((item) => !defaults.some((base) => base.id === item.id) || item.favorite || item.tags?.length)
+    .map((item) => ({ ...item, source: defaults.some((base) => base.id === item.id) ? 'built-in' : item.source || 'custom' }));
+  localStorage.setItem(PRESETS_STORAGE_KEY, JSON.stringify(stored));
   localStorage.removeItem(LEGACY_PRESETS_STORAGE_KEY);
 }
 
