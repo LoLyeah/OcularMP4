@@ -133,6 +133,9 @@ export default function GuidePage() {
       const settings = readSettings();
       setLocale(settings.locale);
       setReduceMotion(settings.motion === 'reduced' || (settings.motion === 'system' && media.matches));
+      document.documentElement.lang = settings.locale;
+      document.documentElement.dataset.theme = settings.theme;
+      document.documentElement.dataset.motion = settings.motion;
     };
     const timer = window.setTimeout(syncPreferences, 0);
     media.addEventListener('change', syncPreferences);
@@ -179,24 +182,29 @@ export default function GuidePage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#0b1020] text-slate-100">
-      {!reduceMotion && <motion.div aria-hidden="true" initial={{ scaleY: 1 }} animate={{ scaleY: 0 }} transition={{ duration: .5, ease: [0.76, 0, 0.24, 1] }} style={{ transformOrigin: 'top' }} className="pointer-events-none fixed inset-0 z-50 bg-gradient-to-b from-[#18213d] to-[#0b1020]" />}
-      <motion.header {...enter} className="sticky top-0 z-20 border-b border-white/10 bg-[#0b1020]/90 backdrop-blur-xl">
+    <main className="guide-shell min-h-screen bg-transparent text-slate-100">
+      <motion.header {...enter} className="guide-header sticky top-0 z-20 border-b border-white/10 bg-[#0b1020]/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
             <Link href="/" className="flex min-w-0 items-center gap-3">
               <Image src="/logo-mark.svg" alt="OcularMP4" width={38} height={38} className="shrink-0 rounded-xl" />
               <span className="hidden truncate font-semibold tracking-tight sm:inline">OcularMP4 <span className="font-normal text-slate-500">/ Wiki</span></span>
             </Link>
-            <Link href="/" className="whitespace-nowrap rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-1 inline h-3.5 w-3.5" />{copy.back}</Link>
+            <Link href="/" className="inline-flex min-h-11 items-center whitespace-nowrap rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-1 inline h-3.5 w-3.5" />{copy.back}</Link>
           </div>
           <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-white/10 bg-black/20 p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => setLocale(item)} className={`relative rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'text-[#0b1020]' : 'text-slate-400'}`}>{locale === item && <motion.span layoutId="wiki-active-language" className="absolute inset-0 rounded-md bg-cyan-300" transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 34 }} />}<span className="relative">{item.toUpperCase()}</span></button>)}</div>
+            <div role="group" aria-label="Language" className="flex rounded-lg border border-white/10 bg-black/20 p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} aria-pressed={locale === item} onClick={() => setLocale(item)} className={`relative min-h-11 min-w-11 rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'text-[#0b1020]' : 'text-slate-400'}`}>{locale === item && <motion.span layoutId="wiki-active-language" className="absolute inset-0 rounded-md bg-cyan-300" transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 34 }} />}<span className="relative">{item.toUpperCase()}</span></button>)}</div>
           </div>
         </div>
       </motion.header>
       <div className="mx-auto grid max-w-7xl gap-10 px-5 py-10 lg:grid-cols-[220px_1fr] lg:px-8">
-        <motion.aside {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, x: -16 }, animate: { opacity: 1, x: 0 }, transition: { delay: .08, duration: .42, ease: [0.22, 1, 0.36, 1] } })} className="lg:sticky lg:top-24 lg:h-fit">
+        <details className="smooth-details rounded-2xl border border-white/10 bg-[#111a30] p-3 lg:hidden">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-xl px-3 text-sm font-semibold text-white">{copy.toc}<ChevronRight className="h-4 w-4 text-slate-500" /></summary>
+          <nav className="mt-2 space-y-1 border-t border-white/10 pt-2">
+            {copy.sections.map(([id, label], index) => <a key={id} href={`#${id}`} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white"><span className="text-xs text-slate-500">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-500" /></a>)}
+          </nav>
+        </details>
+        <motion.aside {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, x: -16 }, animate: { opacity: 1, x: 0 }, transition: { delay: .08, duration: .42, ease: [0.22, 1, 0.36, 1] } })} className="hidden lg:sticky lg:top-24 lg:block lg:h-fit">
           <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-200">{copy.badge}</div>
           <nav className="space-y-1 rounded-2xl border border-white/10 bg-[#111a30] p-3">
             <div className="mb-3 px-3 text-xs font-semibold text-slate-400">{copy.toc}</div>

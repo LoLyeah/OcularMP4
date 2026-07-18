@@ -151,6 +151,7 @@ export default function PresetStudio() {
   const [step, setStep] = useState(0);
   const [toast, setToast] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [dragActive, setDragActive] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueJob[]>([]);
   const [recoveredJobs, setRecoveredJobs] = useState<RecoverableQueueJob[]>([]);
@@ -171,6 +172,7 @@ export default function PresetStudio() {
   const [activePreset, setActivePreset] = useState<Preset>(DEFAULT_PRESETS[0]);
   const [category, setCategory] = useState<(typeof categories)[number]>('all');
   const [query, setQuery] = useState('');
+  const [showAllPresets, setShowAllPresets] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -179,6 +181,7 @@ export default function PresetStudio() {
   const [ffmpegError, setFfmpegError] = useState('');
   const [engine, setEngine] = useState<'native' | 'ffmpeg'>('native');
   const [transcoding, setTranscoding] = useState(false);
+  const [conversionStage, setConversionStage] = useState<'preparing' | 'loadingEngine' | 'encoding' | 'finalizing'>('preparing');
   const [progress, setProgress] = useState(0);
   const [outputUrl, setOutputUrl] = useState('');
   const [outputName, setOutputName] = useState('');
@@ -227,6 +230,28 @@ export default function PresetStudio() {
       audioEnabled: customAudioEnabled,
     },
   }), [activePreset, customAcodec, customArgs, customAudioEnabled, customFormat, customFps, customResolution, customVbitrate, customVcodec]);
+  const nativeMode = engine === 'native';
+  const nativeSourceUnsupported = Boolean(selectedFile?.type.startsWith('audio/'));
+  const effectiveFormat = nativeMode && !nativeSourceUnsupported ? 'webm' : configuredPreset.settings.format;
+  const effectiveVideoCodec = nativeMode && !nativeSourceUnsupported ? 'vp9' : configuredPreset.settings.vcodec;
+  const effectiveAudio = nativeMode && !nativeSourceUnsupported ? false : configuredPreset.settings.audioEnabled;
+  const exactEngineRecommended = nativeMode && (
+    configuredPreset.settings.format !== 'webm'
+    || configuredPreset.settings.vcodec !== 'vp9'
+    || configuredPreset.settings.audioEnabled
+    || queue.length > 1
+    || nativeSourceUnsupported
+  );
+  const outputSummary = nativeMode && nativeSourceUnsupported ? [
+    configuredPreset.settings.format.toUpperCase(),
+    t('ffmpegRequired'),
+  ].join(' · ') : [
+    effectiveFormat.toUpperCase(),
+    effectiveVideoCodec === 'none' ? t('audio') : effectiveVideoCodec.toUpperCase(),
+    configuredPreset.settings.resolution,
+    `${configuredPreset.settings.fps} FPS`,
+    effectiveAudio ? configuredPreset.settings.acodec.toUpperCase() : t('videoOnly'),
+  ].join(' · ');
 
   useEffect(() => {
     if (!selectedJobId) return;
@@ -398,6 +423,8 @@ export default function PresetStudio() {
     const needle = query.toLowerCase().trim();
     return matchesCategory && (!needle || `${preset.name} ${preset.description} ${preset.category} ${(preset.tags || []).join(' ')}`.toLowerCase().includes(needle));
   }), [category, presets, query]);
+  const showingRecommended = category === 'all' && !query.trim() && !showAllPresets;
+  const visiblePresets = showingRecommended ? filteredPresets.slice(0, 3) : filteredPresets;
 
   const persistPresets = (next: Preset[]) => {
     setPresets(next);
@@ -554,6 +581,7 @@ export default function PresetStudio() {
   const loadFFmpeg = async () => {
     if (ffmpeg) return;
     setFfmpegLoading(true);
+    setConversionStage('loadingEngine');
     setFfmpegError('');
     try {
       const [{ FFmpeg }, { toBlobURL }] = await Promise.all([import('@ffmpeg/ffmpeg'), import('@ffmpeg/util')]);
@@ -563,6 +591,7 @@ export default function PresetStudio() {
       await instance.load({ coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm') });
       setFfmpeg(instance);
       setEngine('ffmpeg');
+      setConversionStage('preparing');
       log('FFmpeg.wasm compiler loaded from CDN.');
       setToast(t('compilerLoaded'));
     } catch (error: any) {
@@ -659,6 +688,7 @@ export default function PresetStudio() {
     const started = Date.now();
     const temporaryFiles: string[] = [];
     try {
+      setConversionStage('preparing');
       if (engine === 'ffmpeg') {
         if (!ffmpeg) throw new Error('Load FFmpeg.wasm first.');
         const { fetchFile } = await import('@ffmpeg/util');
@@ -668,7 +698,9 @@ export default function PresetStudio() {
         temporaryFiles.push(inputName, output);
         await ffmpeg.writeFile(inputName, await fetchFile(workingFile));
         const args = ['-ss', jobTrimStart.toFixed(3), '-to', jobTrimEnd.toFixed(3), '-i', inputName, ...jobPreset.ffmpegArgs, output];
+        setConversionStage('encoding');
         await ffmpeg.exec(args);
+        setConversionStage('finalizing');
         const data = await ffmpeg.readFile(output);
         const blob = new Blob([data], { type: getMimeType(jobSettings.format) });
         const resultUrl = URL.createObjectURL(blob);
@@ -687,11 +719,12 @@ export default function PresetStudio() {
         canvas.width = width || 1280;
         canvas.height = height || 720;
         const stream = canvas.captureStream(jobSettings.fps);
-        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9,opus', videoBitsPerSecond: getBitrateValue(jobSettings.vbitrate) });
+        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: getBitrateValue(jobSettings.vbitrate) });
         const chunks: Blob[] = [];
         recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
         const finished = new Promise<void>((resolve) => {
           recorder.onstop = () => {
+            setConversionStage('finalizing');
             const blob = new Blob(chunks, { type: 'video/webm' });
             const resultUrl = URL.createObjectURL(blob);
             setOutputUrl(resultUrl);
@@ -705,6 +738,7 @@ export default function PresetStudio() {
         });
         video.currentTime = jobTrimStart;
         await new Promise((resolve) => window.setTimeout(resolve, 250));
+        setConversionStage('encoding');
         recorder.start();
         await video.play();
         const draw = () => {
@@ -901,16 +935,16 @@ export default function PresetStudio() {
             </div>
           </div>
           <nav className="app-nav hidden items-center gap-1 md:flex" aria-label="Primary">
-            <button className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white">{t('studio')}</button>
+            <span aria-current="page" className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white">{t('studio')}</span>
             <Link href="/guide" className="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"><CircleHelp className="mr-1.5 inline h-4 w-4" />{t('guide')}</Link>
           </nav>
           <div className="app-actions flex items-center gap-2">
-            <div className="hidden items-center rounded-lg border border-white/10 bg-black/20 p-0.5 sm:flex" aria-label={t('language')}>
-              {(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => updateSettings({ locale: item })} className={`rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}
+            <div role="group" className="hidden items-center rounded-lg border border-white/10 bg-black/20 p-0.5 sm:flex" aria-label={t('language')}>
+              {(['en', 'id'] as Locale[]).map((item) => <button key={item} aria-pressed={locale === item} onClick={() => updateSettings({ locale: item })} className={`min-h-11 min-w-11 rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}
             </div>
             {!isStandalone && installPrompt && <button onClick={installApp} className="hidden items-center justify-center gap-2 rounded-xl border border-cyan-300/25 px-3 py-2.5 text-xs font-semibold leading-none text-cyan-100 hover:bg-cyan-300/10 sm:inline-flex"><Download className="h-4 w-4 shrink-0" />{t('installApp')}</button>}
-            <button onClick={() => setPanel('settings')} aria-label={t('settings')} className="rounded-xl border border-white/10 p-2.5 text-slate-300 transition hover:border-cyan-300/50 hover:text-white"><Settings2 className="h-5 w-5" /></button>
-            <Link href="/guide" className="rounded-xl border border-white/10 p-2.5 text-slate-300 md:hidden" aria-label={t('guide')}><Menu className="h-5 w-5" /></Link>
+            <button onClick={() => setPanel('settings')} aria-label={t('settings')} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-300 transition hover:border-cyan-300/50 hover:text-white"><Settings2 className="h-5 w-5" /></button>
+            <Link href="/guide" className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-300 md:hidden" aria-label={t('guide')}><Menu className="h-5 w-5" /></Link>
           </div>
         </motion.header>
 
@@ -935,41 +969,89 @@ export default function PresetStudio() {
           <motion.div id="studio-content" className="studio-stage" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 18 }, animate: { opacity: 1, y: 0 }, transition: { delay: .12, duration: .45, ease: [0.22, 1, 0.36, 1] } })}>
             <div className="stage-heading mb-5 flex items-end justify-between">
               <AnimatePresence mode="wait" initial={false}><motion.div key={step} {...motionProps}><p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">{steps[step]}</p><h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{step === 0 ? t('importTitle') : step === 1 ? t('choosePreset') : step === 2 ? t('tuneTitle') : t('exportTitle')}</h1></motion.div></AnimatePresence>
-              <div className="text-right text-xs text-slate-500"><span className="text-slate-300">{step + 1}</span> / {steps.length}</div>
+              <div className="shrink-0 whitespace-nowrap text-right text-xs text-slate-500"><span className="text-slate-300">{step + 1}</span> / {steps.length}</div>
             </div>
             <div className="stage-progress mb-5 h-1.5 overflow-hidden rounded-full bg-white/10"><motion.div className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-indigo-400" animate={{ width: `${((step + 1) / steps.length) * 100}%` }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 170, damping: 25 }} /></div>
+            <nav aria-label={t('workflow')} className="mobile-stepper mb-5 grid grid-cols-4 gap-1 lg:hidden">
+              {steps.map((label, index) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={index > step}
+                  aria-current={index === step ? 'step' : undefined}
+                  onClick={() => index <= step && setStep(index)}
+                  className={`min-h-11 rounded-xl px-1.5 py-2 text-[10px] font-semibold ${index === step ? 'bg-cyan-300 text-[#0b1020]' : index < step ? 'bg-cyan-300/10 text-cyan-100' : 'bg-white/5 text-slate-500'}`}
+                >
+                  <span className="mb-0.5 block text-[9px] opacity-70">{String(index + 1).padStart(2, '0')}</span>
+                  {label}
+                </button>
+              ))}
+            </nav>
 
             <AnimatePresence mode="wait">
               <motion.div key={step} {...motionProps}>
                 {step === 0 && <section className="space-y-5">
-                  {!selectedFile ? <div onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onClick={() => fileInputRef.current?.click()} className="dropzone group cursor-pointer rounded-3xl border border-dashed border-white/15 p-8 text-center transition sm:p-14"><input ref={fileInputRef} type="file" multiple accept="video/*,audio/*" className="hidden" onChange={(event) => { addFiles(event.target.files || []); event.currentTarget.value = ''; }} /><div className="upload-glyph mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition duration-300 group-hover:scale-110 group-hover:rotate-2"><Upload className="h-7 w-7" /></div><h2 className="mb-2 text-lg font-semibold text-white">{t('importDescription')}</h2><p className="mx-auto mb-6 max-w-[52ch] text-sm leading-6 text-slate-400">{t('supported')} · {t('multiFileHint')}</p><span className="inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><FolderOpen className="h-4 w-4" />{t('chooseFile')}</span></div> : <div className="media-preview overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedJobId(null); setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  {!selectedFile ? (
+                    <div
+                      onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
+                      onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+                      onDragLeave={() => setDragActive(false)}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setDragActive(false);
+                        addFiles(event.dataTransfer.files);
+                      }}
+                      className={`dropzone group rounded-3xl border border-dashed p-8 text-center transition sm:p-14 ${dragActive ? 'is-drag-active border-cyan-300/70' : 'border-white/15'}`}
+                    >
+                      <input
+                        id="media-file-input"
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept="video/*,audio/*"
+                        className="hidden"
+                        onChange={(event) => {
+                          addFiles(event.target.files || []);
+                          event.currentTarget.value = '';
+                        }}
+                      />
+                      <div className="upload-glyph mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-cyan-300/10 text-cyan-200 transition duration-300 group-hover:scale-105">
+                        <Upload className="h-7 w-7" />
+                      </div>
+                      <h2 className="mb-2 text-lg font-semibold text-white">{dragActive ? t('chooseFile') : t('importDescription')}</h2>
+                      <p className="mx-auto mb-6 max-w-[52ch] text-sm leading-6 text-slate-400">{t('supported')} · {t('multiFileHint')}</p>
+                      <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]">
+                        <FolderOpen className="h-4 w-4" />{t('chooseFile')}
+                      </button>
+                    </div>
+                  ) : <div className="media-preview overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedJobId(null); setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="min-h-11 rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
                   {recoveredJobs.length > 0 && <div className="rounded-2xl border border-amber-300/20 bg-amber-300/5 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><AlertCircle className="h-4 w-4" />{t('interruptedQueue')}</div><p className="mt-1 text-xs text-slate-400">{t('interruptedQueueBody')} ({recoveredJobs.map((job) => job.fileName).join(', ')})</p></div><div className="flex gap-2"><button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-amber-200 px-3 py-2 text-xs font-semibold text-[#0b1020]">{t('chooseFilesAgain')}</button><button onClick={() => { setRecoveredJobs([]); localStorage.removeItem(QUEUE_RECOVERY_KEY); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300">{t('dismiss')}</button></div></div></div>}
                   {queue.length > 0 && <div className="queue-panel rounded-2xl border border-white/10 bg-[#111a30] p-4">
                     <div className="queue-panel-head mb-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="text-sm font-semibold text-white">{t('queue')} <span className="text-xs font-normal text-slate-500">({queue.length})</span></div>
                       <div className="flex flex-wrap gap-2">
-                        {queue.some((job) => job.status === 'completed') && <button onClick={clearCompletedJobs} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5">{t('clearCompleted')}</button>}
+                        {queue.some((job) => job.status === 'completed') && <button onClick={clearCompletedJobs} className="min-h-11 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5">{t('clearCompleted')}</button>}
                         {transcoding ? <>
-                          <button onClick={toggleQueuePause} className="rounded-lg border border-amber-300/20 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-300/10">{queuePaused ? <Play className="mr-1 inline h-3.5 w-3.5" /> : <Pause className="mr-1 inline h-3.5 w-3.5" />}{queuePaused ? t('resumeQueue') : t('pauseQueue')}</button>
-                          <button onClick={cancelQueue} className="rounded-lg border border-rose-300/20 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-300/10"><X className="mr-1 inline h-3.5 w-3.5" />{t('cancelQueue')}</button>
-                        </> : <button onClick={() => fileInputRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
+                          <button onClick={toggleQueuePause} className="min-h-11 rounded-lg border border-amber-300/20 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-300/10">{queuePaused ? <Play className="mr-1 inline h-3.5 w-3.5" /> : <Pause className="mr-1 inline h-3.5 w-3.5" />}{queuePaused ? t('resumeQueue') : t('pauseQueue')}</button>
+                          <button onClick={cancelQueue} className="min-h-11 rounded-lg border border-rose-300/20 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-300/10"><X className="mr-1 inline h-3.5 w-3.5" />{t('cancelQueue')}</button>
+                        </> : <button onClick={() => fileInputRef.current?.click()} className="min-h-11 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
                       </div>
                     </div>
                     <motion.div layout aria-live="polite" aria-busy={transcoding} className="space-y-2">
                       <AnimatePresence initial={false}>
                       {queue.map((job, index) => <motion.div layout key={job.id} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, scale: .98, y: 8 }, animate: { opacity: 1, scale: 1, y: 0 }, exit: { opacity: 0, scale: .98, height: 0, marginBottom: 0 }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })} className={`queue-item overflow-hidden rounded-xl border p-3 transition ${selectedJobId === job.id ? 'is-selected border-cyan-300/30 bg-cyan-300/5' : 'border-white/5 bg-black/15'}`}>
                         <div className="queue-item-head flex items-start gap-3">
-                          <button onClick={() => selectQueueJob(job)} className="queue-file min-w-0 flex flex-1 items-center gap-3 text-left">
+                          <button onClick={() => selectQueueJob(job)} className="queue-file flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left">
                             <span className="queue-file-icon grid shrink-0 place-items-center"><FileVideo className="h-4 w-4" /></span>
                             <span className="min-w-0"><span className="block truncate text-xs font-medium text-white">{job.file.name}</span>
                             <span className="mt-1 block text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</span></span>
                           </button>
                           <div className="flex shrink-0 items-center gap-1">
-                            <button disabled={transcoding || index === 0} onClick={() => moveJob(job.id, -1)} aria-label={t('moveUp')} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-3.5 w-3.5" /></button>
-                            <button disabled={transcoding || index === queue.length - 1} onClick={() => moveJob(job.id, 1)} aria-label={t('moveDown')} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-3.5 w-3.5" /></button>
-                            {job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="rounded-md p-1.5 text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}
-                            {job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="rounded-md p-1.5 text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}
-                            {job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="rounded-md p-1.5 text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}
+                            <button disabled={transcoding || index === 0} onClick={() => moveJob(job.id, -1)} aria-label={t('moveUp')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-3.5 w-3.5" /></button>
+                            <button disabled={transcoding || index === queue.length - 1} onClick={() => moveJob(job.id, 1)} aria-label={t('moveDown')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-3.5 w-3.5" /></button>
+                            {job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}
+                            {job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}
+                            {job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}
                           </div>
                         </div>
                         <div className="queue-item-settings mt-3 grid gap-2 border-t border-white/5 pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
@@ -986,23 +1068,100 @@ export default function PresetStudio() {
                     </motion.div>
                   </div>}
                   {selectedFile && <div className="trim-panel rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="trim-panel-head mb-4 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-cyan-200" />{t('trim')}</div><span className="trim-readout rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">{trimStart.toFixed(1)}s – {(trimEnd || duration).toFixed(1)}s</span></div><div className="trim-controls grid gap-4 sm:grid-cols-2"><label className="text-xs text-slate-400"><span>{t('start')}</span><strong>{trimStart.toFixed(1)}s</strong><input aria-label={t('start')} type="range" min="0" max={duration || 1} step="0.1" value={trimStart} onChange={(event) => { const value = Math.min(Number(event.target.value), Math.max(0, (trimEnd || duration) - 0.1)); setTrimStart(value); if (selectedJobId) setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, trimStart: value } : job)); }} className="mt-3 w-full accent-cyan-300" /></label><label className="text-xs text-slate-400"><span>{t('end')}</span><strong>{(trimEnd || duration).toFixed(1)}s</strong><input aria-label={t('end')} type="range" min="0" max={duration || 1} step="0.1" value={trimEnd || duration} onChange={(event) => { const value = Math.max(Number(event.target.value), trimStart + 0.1); setTrimEnd(value); if (selectedJobId) setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, trimEnd: value } : job)); }} className="mt-3 w-full accent-indigo-400" /></label></div></div>}
-                  <div className="flex justify-end"><button onClick={selectAndContinue} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] transition hover:bg-cyan-200">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
+                  <div className="flex items-center justify-end gap-3">
+                    {!selectedFile && <span className="text-xs text-slate-400">{t('chooseFileFirst')}</span>}
+                    <button disabled={!selectedFile} onClick={selectAndContinue} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] transition hover:bg-cyan-200 disabled:opacity-40">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button>
+                  </div>
                 </section>}
 
                 {step === 1 && <section className="space-y-5">
                   <div className="preset-toolbar rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPresets')} className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-cyan-300/60" /></div><div className="preset-filters flex gap-1 overflow-x-auto">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${category === item ? 'bg-cyan-300 text-[#0b1020]' : 'bg-white/5 text-slate-400 hover:text-white'}`}>{t(categoryKey[item])}</button>)}</div></div><div className="preset-actions mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3"><button onClick={exportPresets} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Download className="mr-1 inline h-3.5 w-3.5" />{t('exportPresets')}</button><button onClick={() => presetImportRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('importPresets')}</button><input ref={presetImportRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { importPresets(event.target.files?.[0]); event.currentTarget.value = ''; }} /><button onClick={() => setShowHistory((value) => !value)} className={`rounded-lg border px-3 py-2 text-xs ${showHistory ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 text-slate-300 hover:bg-white/5'}`}><History className="mr-1 inline h-3.5 w-3.5" />{t('aiHistory')} ({aiHistory.length})</button></div></div>
-                  <motion.div layout className="preset-grid grid gap-3 md:grid-cols-2"><AnimatePresence initial={false}>{filteredPresets.map((preset) => <motion.div layout key={preset.id} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, scale: .97 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: .97 }, transition: { duration: .2, ease: [0.22, 1, 0.36, 1] } })} onClick={() => selectPreset(preset)} onKeyDown={(event) => event.key === 'Enter' && selectPreset(preset)} role="button" tabIndex={0} className={`preset-card cursor-pointer rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${activePreset.id === preset.id ? 'is-active border-cyan-300/70 bg-cyan-300/10' : 'border-white/10 bg-[#111a30] hover:border-white/25'}`}><div className="mb-2 flex items-start justify-between gap-3"><span className="font-medium text-white">{preset.name}</span><div className="flex items-center gap-1"><button aria-label={t('favorite')} onClick={(event) => { event.stopPropagation(); toggleFavorite(preset); }} className={`rounded-md p-1 ${preset.favorite ? 'text-rose-300' : 'text-slate-600 hover:text-rose-300'}`}><motion.span animate={reduceMotion ? undefined : { scale: preset.favorite ? [1, 1.35, 1] : 1 }} transition={{ duration: .32 }} className="block"><Heart className="h-4 w-4" fill={preset.favorite ? 'currentColor' : 'none'} /></motion.span></button><AnimatePresence>{activePreset.id === preset.id && <motion.span {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, scale: .5 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: .5 } })}><Check className="h-4 w-4 shrink-0 text-cyan-200" /></motion.span>}</AnimatePresence></div></div><p className="mb-3 text-xs leading-relaxed text-slate-400">{preset.description}</p>{Boolean(preset.tags?.length) && <div className="mb-3 flex flex-wrap gap-1">{preset.tags?.map((tag) => <span key={tag} className="rounded-full bg-indigo-300/10 px-2 py-0.5 text-[10px] text-indigo-100">#{tag}</span>)}</div>}<div className="flex items-center justify-between gap-2 text-[11px] text-slate-500"><div className="flex items-center gap-2"><span className="rounded-md bg-black/20 px-2 py-1 uppercase text-cyan-100">{preset.settings.format}</span><span>{preset.settings.resolution} · {preset.settings.fps} FPS</span></div>{!DEFAULT_PRESETS.some((base) => base.id === preset.id) && <div className="flex gap-1"><button aria-label={t('renamePreset')} onClick={(event) => { event.stopPropagation(); renamePreset(preset); }} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"><Pencil className="h-3.5 w-3.5" /></button><button aria-label={t('editTags')} onClick={(event) => { event.stopPropagation(); editPresetTags(preset); }} className="rounded-md p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"><Tag className="h-3.5 w-3.5" /></button><button aria-label={t('duplicatePreset')} onClick={(event) => { event.stopPropagation(); duplicatePreset(preset); }} className="rounded-md px-2 py-1 text-slate-400 hover:bg-white/10 hover:text-white">⧉</button><button aria-label={t('deletePreset')} onClick={(event) => { event.stopPropagation(); deletePreset(preset); }} className="rounded-md px-2 py-1 text-slate-400 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button></div>}</div></motion.div>)}</AnimatePresence></motion.div>
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold text-white">{showingRecommended ? t('recommendedPresets') : t('presetLibrary')}</h2>
+                    <span className="text-xs text-slate-400">{visiblePresets.length} / {filteredPresets.length}</span>
+                  </div>
+                  <motion.div layout role="radiogroup" aria-label={t('presetLibrary')} className="preset-grid grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <AnimatePresence initial={false}>
+                      {visiblePresets.map((preset) => (
+                        <PresetCard
+                          key={preset.id}
+                          preset={preset}
+                          active={activePreset.id === preset.id}
+                          builtIn={DEFAULT_PRESETS.some((base) => base.id === preset.id)}
+                          reduceMotion={reduceMotion}
+                          t={t}
+                          onSelect={() => selectPreset(preset)}
+                          onFavorite={() => toggleFavorite(preset)}
+                          onRename={() => renamePreset(preset)}
+                          onEditTags={() => editPresetTags(preset)}
+                          onDuplicate={() => duplicatePreset(preset)}
+                          onDelete={() => deletePreset(preset)}
+                        />
+                      ))}
+                    </AnimatePresence>
+                  </motion.div>
+                  {category === 'all' && !query.trim() && filteredPresets.length > 3 && (
+                    <button type="button" onClick={() => setShowAllPresets((value) => !value)} className="min-h-11 w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm text-slate-300 hover:bg-white/5">
+                      {showAllPresets ? t('showFewerPresets') : `${t('browseAllPresets')} (${filteredPresets.length})`}
+                    </button>
+                  )}
                   {!filteredPresets.length && <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-slate-500">{t('noResults')}<br />{t('tryAnother')}</div>}
                   <AnimatePresence initial={false}>{showHistory && <motion.div {...collapseProps} className="overflow-hidden rounded-2xl border border-indigo-300/20 bg-indigo-300/5"><div className="p-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{t('aiHistory')}</h3><button onClick={() => { setAiHistory([]); writeAIHistory([]); localStorage.removeItem(AI_HISTORY_STORAGE_KEY); }} className="text-xs text-slate-400 hover:text-rose-200">{t('clearHistory')}</button></div>{aiHistory.length ? <div className="space-y-2">{aiHistory.slice(0, 6).map((item, index) => <motion.button {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, x: -8 }, animate: { opacity: 1, x: 0 }, transition: { delay: index * .035 } })} key={item.id} onClick={() => { const restored: Preset = { ...item.preset, id: `history-${item.id}`, source: 'ai', tags: ['ai', 'history'] }; persistPresets([...presets, restored]); selectPreset(restored); setToast(t('historyRestored')); }} className="w-full rounded-xl border border-white/10 bg-black/15 p-3 text-left hover:border-indigo-300/40"><div className="flex items-center justify-between gap-2 text-xs text-white"><span className="truncate">{item.prompt}</span><span className="shrink-0 text-slate-500">{new Date(item.createdAt).toLocaleDateString(locale)}</span></div><div className="mt-1 text-[11px] text-slate-500">{item.provider} · {item.model}</div></motion.button>)}</div> : <p className="text-xs text-slate-500">{t('historyEmpty')}</p>}</div></motion.div>}</AnimatePresence>
-                  <div className="rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 to-cyan-300/5 p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-indigo-200" />{t('aiTitle')}</div><button onClick={() => setPanel('settings')} className="rounded-lg border border-indigo-300/20 px-2.5 py-1 text-[11px] text-indigo-100 hover:bg-indigo-300/10">{t('aiPoweredBy')} {getAIProvider(settings.aiProvider).name} · {settings.aiModel}</button></div><div className="flex flex-col gap-2 sm:flex-row"><input value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generatePreset()} placeholder={t('aiHint')} className="flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-indigo-300/70" /><button disabled={aiGenerating || !aiPrompt.trim()} onClick={generatePreset} className="rounded-xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{aiGenerating ? t('generating') : t('generate')}<Wand2 className="ml-2 inline h-4 w-4" /></button></div>{aiError && <p className="mt-3 text-xs text-rose-300"><AlertCircle className="mr-1 inline h-4 w-4" />{aiError}</p>}</div>
-                  <div className="flex justify-between"><button onClick={() => setStep(0)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button onClick={() => setStep(2)} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
+                  <details className="ai-disclosure smooth-details rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 to-cyan-300/5">
+                    <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 p-5 text-sm font-semibold text-white">
+                      <span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-indigo-200" />{t('createWithAI')}</span>
+                      <ChevronDown className="h-4 w-4 text-indigo-200" />
+                    </summary>
+                    <div className="border-t border-indigo-300/15 p-5 pt-4">
+                      <p className="mb-4 text-xs leading-5 text-slate-400">{t('aiPrivacy')}</p>
+                      <div className="mb-3 flex justify-end">
+                        <button onClick={() => setPanel('settings')} className="min-h-11 rounded-lg border border-indigo-300/20 px-3 py-2 text-[11px] text-indigo-100 hover:bg-indigo-300/10">{t('aiPoweredBy')} {getAIProvider(settings.aiProvider).name} · {settings.aiModel}</button>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <input value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generatePreset()} placeholder={t('aiHint')} className="flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-indigo-300/70" />
+                        <button disabled={aiGenerating || !aiPrompt.trim()} onClick={generatePreset} className="min-h-11 rounded-xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{aiGenerating ? t('generating') : t('generate')}<Wand2 className="ml-2 inline h-4 w-4" /></button>
+                      </div>
+                      {aiError && <p className="mt-3 text-xs text-rose-300"><AlertCircle className="mr-1 inline h-4 w-4" />{aiError}</p>}
+                    </div>
+                  </details>
+                  <div className="hidden justify-between sm:flex"><button onClick={() => setStep(0)} className="min-h-11 rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button onClick={() => setStep(2)} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
+                  <div className="mobile-action-dock sticky bottom-3 z-10 rounded-2xl border border-cyan-300/20 bg-[#101827]/95 p-3 shadow-2xl shadow-black/30 backdrop-blur-xl sm:hidden">
+                    <div className="mb-2 min-w-0">
+                      <div className="truncate text-xs font-semibold text-white">{activePreset.name}</div>
+                      <div className="truncate text-[11px] text-slate-400">{configuredPreset.settings.format.toUpperCase()} · {configuredPreset.settings.resolution} · {configuredPreset.settings.fps} FPS</div>
+                    </div>
+                    <div className="grid grid-cols-[auto_1fr] gap-2">
+                      <button onClick={() => setStep(0)} aria-label={t('back')} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-300"><ArrowLeft className="h-4 w-4" /></button>
+                      <button onClick={() => setStep(2)} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button>
+                    </div>
+                  </div>
                 </section>}
 
                 {step === 2 && <section className="space-y-5">
-                  <div className="settings-grid grid gap-4 rounded-2xl border border-white/10 bg-[#111a30] p-5 sm:grid-cols-2"><Field label={t('format')}><select value={customFormat} onChange={(event) => setCustomFormat(event.target.value as PresetSettings['format'])}><option value="mp4">MP4</option><option value="webm">WebM</option><option value="gif">GIF</option><option value="mp3">MP3</option><option value="mkv">MKV</option></select></Field><Field label={t('videoCodec')}><select value={customVcodec} onChange={(event) => setCustomVcodec(event.target.value as PresetSettings['vcodec'])}><option value="h264">H.264</option><option value="vp9">VP9</option><option value="hevc">HEVC</option><option value="gif">GIF</option><option value="none">None</option></select></Field><Field label={t('resolution')}><select value={customResolution} onChange={(event) => setCustomResolution(event.target.value as PresetSettings['resolution'])}><option value="original">Original</option><option value="1080p">1080p</option><option value="720p">720p</option><option value="480p">480p</option><option value="360p">360p</option></select></Field><Field label={t('frameRate')}><select value={customFps} onChange={(event) => setCustomFps(Number(event.target.value))}><option value="60">60 FPS</option><option value="30">30 FPS</option><option value="24">24 FPS</option><option value="15">15 FPS</option><option value="12">12 FPS</option></select></Field><Field label={t('bitrate')}><select value={customVbitrate} onChange={(event) => setCustomVbitrate(event.target.value)}><option value="auto">Auto</option><option value="5000k">5 Mbps</option><option value="2500k">2.5 Mbps</option><option value="1200k">1.2 Mbps</option><option value="500k">500 Kbps</option></select></Field><div><span className="mb-2 block text-xs text-slate-400">{t('audioTrack')}</span><button onClick={() => setCustomAudioEnabled((value) => !value)} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm ${customAudioEnabled ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-black/20 text-slate-500'}`}>{customAudioEnabled ? t('enabled') : t('muted')}{customAudioEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button></div></div>
-                  <details className="smooth-details rounded-2xl border border-white/10 bg-[#111a30] p-5"><summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-white">{t('advanced')}<ChevronDown className="h-4 w-4 text-slate-500" /></summary><textarea value={customArgs} onChange={(event) => setCustomArgs(event.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs text-slate-200 outline-none focus:border-cyan-300/60" /></details>
-                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="rounded-xl border border-cyan-300/20 px-4 py-3 text-sm text-cyan-100 hover:bg-cyan-300/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || !selectedFile} onClick={handleTranscode} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{transcoding ? t('processing') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
-                  <AnimatePresence>{transcoding && <motion.div {...collapseProps} className="overflow-hidden rounded-xl border border-white/10 bg-[#111a30]"><div className="p-4"><div className="mb-2 flex justify-between text-xs text-slate-400"><span>{t('processing')}</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-white/10"><motion.div className="progress-shimmer h-full bg-gradient-to-r from-cyan-300 to-indigo-400" animate={{ width: `${progress}%` }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 120, damping: 22 }} /></div></div></motion.div>}</AnimatePresence>
+                  <section aria-label={t('effectiveOutput')} className={`output-summary rounded-2xl border p-5 ${exactEngineRecommended ? 'border-amber-300/25 bg-amber-300/5' : 'border-cyan-300/20 bg-cyan-300/5'}`}>
+                    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{t('effectiveOutput')}</div>
+                        <div className="break-words text-base font-semibold text-white">{outputSummary}</div>
+                        {nativeMode && <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-400">{t(nativeSourceUnsupported ? 'audioNeedsFfmpeg' : 'nativeOutputNote')}</p>}
+                      </div>
+                      <div role="group" aria-label={t('engine')} className="grid shrink-0 grid-cols-2 gap-1 rounded-xl border border-white/10 bg-black/15 p-1">
+                        <button type="button" disabled={queue.length > 1 || nativeSourceUnsupported} aria-pressed={nativeMode && !nativeSourceUnsupported} onClick={() => setEngine('native')} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${nativeMode && !nativeSourceUnsupported ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400 hover:text-white'} disabled:opacity-35`}>{t('quickOutput')}</button>
+                        <button type="button" disabled={ffmpegLoading} aria-pressed={!nativeMode} onClick={() => ffmpeg ? setEngine('ffmpeg') : void loadFFmpeg()} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${!nativeMode ? 'bg-indigo-300 text-[#0b1020]' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}>{ffmpegLoading ? t('loadingEngine') : t('exactOutput')}</button>
+                      </div>
+                    </div>
+                  </section>
+                  <div className="settings-grid grid gap-4 rounded-2xl border border-white/10 bg-[#111a30] p-5 sm:grid-cols-2">
+                    <Field label={t('format')}><select disabled={nativeMode} value={nativeMode && !nativeSourceUnsupported ? 'webm' : customFormat} onChange={(event) => setCustomFormat(event.target.value as PresetSettings['format'])}><option value="mp4">MP4</option><option value="webm">WebM</option><option value="gif">GIF</option><option value="mp3">MP3</option><option value="mkv">MKV</option></select></Field>
+                    <Field label={t('videoCodec')}><select disabled={nativeMode} value={nativeMode && !nativeSourceUnsupported ? 'vp9' : customVcodec} onChange={(event) => setCustomVcodec(event.target.value as PresetSettings['vcodec'])}><option value="h264">H.264</option><option value="vp9">VP9</option><option value="hevc">HEVC</option><option value="gif">GIF</option><option value="none">None</option></select></Field>
+                    <Field label={t('resolution')}><select value={customResolution} onChange={(event) => setCustomResolution(event.target.value as PresetSettings['resolution'])}><option value="original">Original</option><option value="1080p">1080p</option><option value="720p">720p</option><option value="480p">480p</option><option value="360p">360p</option></select></Field>
+                    <Field label={t('frameRate')}><select value={customFps} onChange={(event) => setCustomFps(Number(event.target.value))}><option value="60">60 FPS</option><option value="30">30 FPS</option><option value="24">24 FPS</option><option value="15">15 FPS</option><option value="12">12 FPS</option></select></Field>
+                    <Field label={t('bitrate')}><select value={customVbitrate} onChange={(event) => setCustomVbitrate(event.target.value)}><option value="auto">Auto</option><option value="5000k">5 Mbps</option><option value="2500k">2.5 Mbps</option><option value="1200k">1.2 Mbps</option><option value="500k">500 Kbps</option></select></Field>
+                    <div><span className="mb-2 block text-xs text-slate-400">{t('audioTrack')}</span><button disabled={nativeMode} onClick={() => setCustomAudioEnabled((value) => !value)} className={`flex min-h-11 w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm disabled:cursor-not-allowed disabled:opacity-55 ${effectiveAudio ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-black/20 text-slate-500'}`}>{effectiveAudio ? t('enabled') : t('videoOnly')}{effectiveAudio ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button></div>
+                  </div>
+                  {!nativeMode ? <details className="smooth-details rounded-2xl border border-white/10 bg-[#111a30] p-5"><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium text-white">{t('advanced')}<ChevronDown className="h-4 w-4 text-slate-500" /></summary><textarea value={customArgs} onChange={(event) => setCustomArgs(event.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs text-slate-200 outline-none focus:border-cyan-300/60" /></details> : null}
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="min-h-11 rounded-xl border border-cyan-300/20 px-4 py-3 text-sm text-cyan-100 hover:bg-cyan-300/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-11 rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || ffmpegLoading || !selectedFile || (nativeMode && queue.length > 1)} onClick={nativeMode && nativeSourceUnsupported ? () => void loadFFmpeg() : handleTranscode} className="min-h-11 flex-1 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{ffmpegLoading ? t('loadingEngine') : transcoding ? t(conversionStage) : nativeMode && nativeSourceUnsupported ? t('loadExactEngine') : nativeMode ? t('convertToWebm') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
+                  <AnimatePresence>{transcoding && <motion.div {...collapseProps} role="status" aria-live="polite" className="overflow-hidden rounded-xl border border-white/10 bg-[#111a30]"><div className="p-4"><div className="mb-2 flex justify-between text-xs text-slate-400"><span>{t(conversionStage)}</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-white/10"><motion.div className="progress-shimmer h-full bg-gradient-to-r from-cyan-300 to-indigo-400" animate={{ width: `${progress}%` }} transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 120, damping: 22 }} /></div></div></motion.div>}</AnimatePresence>
                 </section>}
 
                 {step === 3 && <section className="space-y-5">
@@ -1014,16 +1173,98 @@ export default function PresetStudio() {
           </motion.div>
         </section>
 
-        <footer className="status-bar flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#111a30] p-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap items-center gap-2"><span className={`status-dot h-2 w-2 rounded-full ${isOnline ? 'bg-cyan-300' : 'bg-amber-300'}`} />{isOnline ? t('online') : t('offline')} · {t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')} · AI: {getAIProvider(settings.aiProvider).name} / {settings.aiModel}</div><button onClick={() => setShowDiagnostics((value) => !value)} className="text-left hover:text-slate-300">{t('diagnostics')} <ChevronDown className="ml-1 inline h-3.5 w-3.5" /></button></footer>
+        <footer className="status-bar flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#111a30] p-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`status-dot h-2 w-2 rounded-full ${isOnline ? 'bg-cyan-300' : 'bg-amber-300'}`} />
+            <span>{isOnline ? t('online') : t('offline')}</span>
+            <span aria-hidden="true">·</span>
+            <span className="rounded-full bg-white/5 px-2 py-1">{t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : nativeSourceUnsupported ? t('ffmpegRequired') : t('quickOutput')}</span>
+            <span className="rounded-full bg-white/5 px-2 py-1">AI: {getAIProvider(settings.aiProvider).name}</span>
+          </div>
+          <button aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="min-h-11 rounded-lg px-2 text-left hover:bg-white/5 hover:text-slate-200">{t('diagnostics')} <ChevronDown className={`ml-1 inline h-3.5 w-3.5 transition ${showDiagnostics ? 'rotate-180' : ''}`} /></button>
+        </footer>
         <AnimatePresence initial={false}>{showDiagnostics && <motion.div {...collapseProps} className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/20 font-mono text-[11px] text-slate-500"><div className="p-4"><div className="mb-2 flex justify-between"><span>{logs.length} events</span><button onClick={() => setLogs([])}>{t('clear')}</button></div>{logs.map((item, index) => <div key={`${item}-${index}`} className="border-l border-cyan-300/20 py-0.5 pl-2">{item}</div>)}</div></motion.div>}</AnimatePresence>
       </div>
 
       <AnimatePresence>
-        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '105%', opacity: .5 }, animate: { x: 0, opacity: 1 }, exit: { x: '105%', opacity: .5 }, transition: { type: 'spring', mass: .7, damping: 25, stiffness: 230 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-xl border border-white/10 p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
+        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.24, ease: [0.22, 1, 0.36, 1] } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '105%', opacity: .5 }, animate: { x: 0, opacity: 1 }, exit: { x: '105%', opacity: .5 }, transition: { type: 'spring', mass: .7, damping: 25, stiffness: 230 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button aria-label={`${t('close')} ${panel === 'guide' ? t('guide') : t('settingsTitle')}`} onClick={() => setPanel(null)} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
       <AnimatePresence>{updateWorker && <motion.div role="status" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 18, scale: .98 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 12 }, transition: { type: 'spring', stiffness: 320, damping: 28 } })} className="fixed bottom-5 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-2xl border border-indigo-300/30 bg-[#151b32]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:right-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-300/15 text-indigo-200"><Sparkles className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-white">{t('updateAvailable')}</div><p className="mt-1 text-xs leading-5 text-slate-400">{t('updateAvailableBody')}</p><button onClick={applyAppUpdate} disabled={transcoding} className="mt-3 inline-flex items-center rounded-lg bg-indigo-300 px-3 py-2 text-xs font-semibold text-[#0b1020] disabled:opacity-40">{t('updateNow')}</button></div></div></motion.div>}</AnimatePresence>
       <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-cyan-300/30 bg-[#14213d] px-4 py-3 text-sm text-cyan-100 shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 12 } })}>{toast}</motion.div>}</AnimatePresence>
     </main>
+  );
+}
+
+function PresetCard({
+  preset,
+  active,
+  builtIn,
+  reduceMotion,
+  t,
+  onSelect,
+  onFavorite,
+  onRename,
+  onEditTags,
+  onDuplicate,
+  onDelete,
+}: {
+  preset: Preset;
+  active: boolean;
+  builtIn: boolean;
+  reduceMotion: boolean;
+  t: (key: TranslationKey) => string;
+  onSelect: () => void;
+  onFavorite: () => void;
+  onRename: () => void;
+  onEditTags: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <motion.div
+      layout
+      {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, scale: .97 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: .97 }, transition: { duration: .2, ease: [0.22, 1, 0.36, 1] as const } })}
+      className={`preset-card relative overflow-hidden rounded-2xl border transition hover:-translate-y-0.5 ${active ? 'is-active border-cyan-300/70 bg-cyan-300/10' : 'border-white/10 bg-[#111a30] hover:border-white/25'}`}
+    >
+      <button
+        type="button"
+        role="radio"
+        aria-checked={active}
+        onClick={onSelect}
+        className="block min-h-11 w-full p-4 pr-14 text-left"
+      >
+        <span className="mb-2 flex items-start gap-2">
+          <span className="min-w-0 flex-1 font-medium text-white">{preset.name}</span>
+          {active && <Check className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" />}
+        </span>
+        <span className="mb-3 block text-xs leading-relaxed text-slate-400">{preset.description}</span>
+        {Boolean(preset.tags?.length) && <span className="mb-3 flex flex-wrap gap-1">{preset.tags?.map((tag) => <span key={tag} className="rounded-full bg-indigo-300/10 px-2 py-0.5 text-[10px] text-indigo-100">#{tag}</span>)}</span>}
+        <span className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+          <span className="rounded-md bg-black/20 px-2 py-1 uppercase text-cyan-100">{preset.settings.format}</span>
+          <span>{preset.settings.resolution} · {preset.settings.fps} FPS</span>
+          <span>{preset.settings.audioEnabled ? preset.settings.acodec.toUpperCase() : t('videoOnly')}</span>
+        </span>
+      </button>
+      <button
+        type="button"
+        aria-label={`${t('favorite')}: ${preset.name}`}
+        aria-pressed={Boolean(preset.favorite)}
+        onClick={onFavorite}
+        className={`absolute right-2 top-2 grid min-h-11 min-w-11 place-items-center rounded-xl ${preset.favorite ? 'text-rose-300' : 'text-slate-500 hover:bg-white/5 hover:text-rose-300'}`}
+      >
+        <motion.span animate={reduceMotion ? undefined : { scale: preset.favorite ? [1, 1.3, 1] : 1 }} transition={{ duration: .28 }} className="block">
+          <Heart className="h-4 w-4" fill={preset.favorite ? 'currentColor' : 'none'} />
+        </motion.span>
+      </button>
+      {!builtIn && (
+        <div className="flex items-center justify-end gap-1 border-t border-white/10 px-2 py-1.5">
+          <button type="button" aria-label={t('renamePreset')} onClick={onRename} className="grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white"><Pencil className="h-3.5 w-3.5" /></button>
+          <button type="button" aria-label={t('editTags')} onClick={onEditTags} className="grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white"><Tag className="h-3.5 w-3.5" /></button>
+          <button type="button" aria-label={t('duplicatePreset')} onClick={onDuplicate} className="grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white">⧉</button>
+          <button type="button" aria-label={t('deletePreset')} onClick={onDelete} className="grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-400 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+    </motion.div>
   );
 }
 

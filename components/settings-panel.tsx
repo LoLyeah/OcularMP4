@@ -38,6 +38,7 @@ export function SettingsPanel({
   const [showKey, setShowKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'ready' | 'failed'>('idle');
+  const [section, setSection] = useState<'general' | 'processing' | 'ai' | 'privacy'>('general');
   const provider = getAIProvider(settings.aiProvider);
 
   const changeProvider = (nextProvider: AIProvider) => {
@@ -93,7 +94,26 @@ export function SettingsPanel({
 
   return (
     <div className="space-y-6">
-      <section>
+      <nav aria-label={t('settingsTitle')} className="settings-tabs grid grid-cols-2 gap-1 rounded-2xl border border-white/10 bg-black/15 p-1 sm:grid-cols-4">
+        {([
+          ['general', t('general')],
+          ['processing', t('processingSettings')],
+          ['ai', 'AI'],
+          ['privacy', t('storage')],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            aria-current={section === id ? 'page' : undefined}
+            onClick={() => setSection(id)}
+            className={`min-h-11 rounded-xl px-2 py-2 text-xs font-semibold transition ${section === id ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {section === 'general' && <section>
         <SectionTitle>{t('general')}</SectionTitle>
         <div className="space-y-3 rounded-2xl border border-white/10 bg-black/15 p-4">
           <div className="flex items-center justify-between gap-4">
@@ -103,7 +123,7 @@ export function SettingsPanel({
                 <button
                   key={locale}
                   onClick={() => onUpdate({ locale })}
-                  className={`rounded-md px-2.5 py-1 text-xs font-semibold ${settings.locale === locale ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}
+                  className={`min-h-11 min-w-11 rounded-md px-2.5 py-1 text-xs font-semibold ${settings.locale === locale ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}
                 >
                   {locale.toUpperCase()}
                 </button>
@@ -123,9 +143,9 @@ export function SettingsPanel({
             onChange={(value) => onUpdate({ motion: value as AppSettings['motion'] })}
           />
         </div>
-      </section>
+      </section>}
 
-      <section>
+      {section === 'ai' && <section>
         <SectionTitle>{t('aiSettings')}</SectionTitle>
         <div className="space-y-4 rounded-2xl border border-indigo-300/20 bg-indigo-300/5 p-4">
           <label className="block text-xs text-slate-400">
@@ -177,7 +197,7 @@ export function SettingsPanel({
                   autoComplete="off"
                   className="w-full rounded-xl border border-white/10 bg-[#0b1020] py-2.5 pl-10 pr-10 text-sm text-white outline-none focus:border-indigo-300/60"
                 />
-                <button type="button" aria-label={showKey ? 'Hide API key' : 'Show API key'} onClick={() => setShowKey((value) => !value)} className="absolute right-2 top-2 rounded-lg p-1.5 text-slate-500 hover:text-white">
+                <button type="button" aria-label={showKey ? 'Hide API key' : 'Show API key'} onClick={() => setShowKey((value) => !value)} className="absolute inset-y-0 right-0 grid min-h-11 min-w-11 place-items-center rounded-lg text-slate-500 hover:text-white">
                   {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
@@ -213,9 +233,9 @@ export function SettingsPanel({
             {testing ? t('testingConnection') : connectionStatus === 'ready' ? t('connectionReady') : connectionStatus === 'failed' ? t('connectionFailed') : t('testConnection')}
           </button>
         </div>
-      </section>
+      </section>}
 
-      <section>
+      {section === 'processing' && <section>
         <SectionTitle>{t('processingSettings')}</SectionTitle>
         <div className="space-y-3 rounded-2xl border border-white/10 bg-black/15 p-4">
           <SettingSelect
@@ -232,9 +252,9 @@ export function SettingsPanel({
           </div>
           {ffmpegError && <p className="text-xs text-rose-300">{ffmpegError}</p>}
         </div>
-      </section>
+      </section>}
 
-      <section>
+      {section === 'privacy' && <section>
         <SectionTitle>{t('storage')}</SectionTitle>
         <div className="space-y-2 rounded-2xl border border-white/10 bg-black/15 p-4">
           <button onClick={onClearPresets} className="flex w-full items-center gap-2 rounded-xl border border-rose-300/20 px-3 py-2.5 text-left text-sm text-rose-200 hover:bg-rose-300/10">
@@ -252,7 +272,7 @@ export function SettingsPanel({
             <KeyRound className="h-4 w-4" />{t('clearApiKeys')}
           </button>
         </div>
-      </section>
+      </section>}
 
       <div className="border-t border-white/10 pt-5 text-xs text-slate-500">
         <div className="flex justify-between"><span>{t('version')}</span><span className="text-slate-300">1.0.0</span></div>
