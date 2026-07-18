@@ -10,5 +10,7 @@ await mkdir(join(dist, 'server'), { recursive: true });
 await cp(openNext, join(dist, 'server'), { recursive: true });
 await rename(join(dist, 'server', 'worker.js'), join(dist, 'server', 'index.js'));
 await cp(join(openNext, 'assets'), join(dist, 'assets'), { recursive: true });
+await mkdir(join(dist, '.openai'), { recursive: true });
+await cp(join(root, '.openai', 'hosting.json'), join(dist, '.openai', 'hosting.json'));
 
 console.log('Prepared the OpenNext Worker bundle for Sites hosting.');
