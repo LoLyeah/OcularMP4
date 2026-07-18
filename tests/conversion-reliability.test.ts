@@ -44,6 +44,16 @@ test('marks active jobs as interrupted after reload', () => {
   }]);
 });
 
+test('ignores queued jobs in recovery snapshots', () => {
+  assert.deepEqual(recoverQueueSnapshot([{
+    id: 'job-queued',
+    fileName: 'waiting.mp4',
+    fileSize: 1000,
+    fileType: 'video/mp4',
+    status: 'queued',
+  }]), []);
+});
+
 test('estimates output size from each job bitrate and trim range', () => {
   assert.equal(estimateOutputBytes({
     sourceSize: 50_000_000,

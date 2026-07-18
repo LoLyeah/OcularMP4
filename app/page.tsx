@@ -332,7 +332,9 @@ export default function PresetStudio() {
 
   useEffect(() => {
     if (!settingsReady) return;
-    const snapshot = queue.map((job) => ({
+    // Only persist an active conversion. A merely queued file is not an
+    // interrupted job, and its File object cannot be restored after reload.
+    const snapshot = queue.filter((job) => job.status === 'processing').map((job) => ({
       id: job.id,
       fileName: job.file.name,
       fileSize: job.file.size,

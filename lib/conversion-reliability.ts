@@ -105,8 +105,10 @@ export function recoverQueueSnapshot(value: unknown): RecoverableQueueJob[] {
     if (!item || typeof item !== 'object') return [];
     const candidate = item as Partial<RecoverableQueueJob>;
     if (typeof candidate.id !== 'string' || typeof candidate.fileName !== 'string' || typeof candidate.fileSize !== 'number') return [];
-    const status = candidate.status === 'processing' ? 'interrupted' : candidate.status;
-    if (!['queued', 'completed', 'failed', 'cancelled', 'interrupted'].includes(status || '')) return [];
+    // Only an actively processing job can be interrupted by a reload. Queued
+    // metadata from older snapshots must not produce a recovery warning.
+    if (candidate.status !== 'processing') return [];
+    const status = 'interrupted';
     return [{
       id: candidate.id,
       fileName: candidate.fileName,
