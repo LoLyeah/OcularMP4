@@ -4,6 +4,7 @@ import { join } from 'node:path';
 const root = process.cwd();
 const openNext = join(root, '.open-next');
 const dist = join(root, 'dist');
+const { version } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 
 // Next's Node runtime currently imports its development-only file logger while
 // booting the server bundle. That logger pulls in `fs`/`path` through CommonJS,
@@ -20,6 +21,23 @@ if (withoutNodeFileLogger === handler) {
   throw new Error('Could not remove Next.js Node-only console logger from the Worker bundle.');
 }
 await writeFile(handlerPath, withoutNodeFileLogger);
+
+// Version the dynamic server module and update the main Worker import. Sites
+// may reuse an unchanged entrypoint and its previously uploaded module graph;
+// a release-specific path guarantees the patched handler is uploaded with the
+// new deployment.
+const versionedHandlerName = `handler-${version}.mjs`;
+await rename(handlerPath, join(openNext, 'server-functions', 'default', versionedHandlerName));
+const workerPath = join(openNext, 'worker.js');
+const worker = await readFile(workerPath, 'utf8');
+const versionedWorker = worker.replace(
+  './server-functions/default/handler.mjs',
+  `./server-functions/default/${versionedHandlerName}`,
+);
+if (versionedWorker === worker) {
+  throw new Error('Could not version the OpenNext server module import.');
+}
+await writeFile(workerPath, versionedWorker);
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(join(dist, 'server'), { recursive: true });

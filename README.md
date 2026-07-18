@@ -305,7 +305,7 @@ The repository also contains an OpenNext Cloudflare configuration.
 Cross-origin opener and embedder headers are configured for WebAssembly
 compatibility.
 
-OcularMP4 follows Semantic Versioning. The current version is `1.1.1`. Release
+OcularMP4 follows Semantic Versioning. The current version is `1.1.2`. Release
 versions must remain synchronized between `package.json`, the settings panel,
 the service worker, and PWA checks.
 
