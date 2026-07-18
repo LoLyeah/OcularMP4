@@ -1,198 +1,145 @@
-# OcularMP4
+<p align="center">
+  <img src="public/logo-mark.svg" width="96" alt="OcularMP4 logo">
+</p>
 
-OcularMP4 is a private, installable media-conversion studio that runs in the
-browser. It provides a guided workflow for importing and trimming local media,
-choosing or generating an encoding preset, adjusting the output, converting the
-file, and downloading the result. The official app is available at
-[ocularmp4.netlify.app](https://ocularmp4.netlify.app).
+<h1 align="center">OcularMP4</h1>
 
-Media conversion happens on the user's device. The app offers a lightweight
-browser-native engine for basic WebM video output and an FFmpeg.wasm engine for
-format-specific transcoding, audio extraction, GIF creation, and custom FFmpeg
-arguments.
+<p align="center">
+  Private, local-first media conversion in the browser.
+</p>
 
-## What the app does
+<p align="center">
+  <a href="https://ocularmp4.netlify.app">Open OcularMP4</a>
+  ·
+  <a href="https://ocularmp4.netlify.app/guide">Read the guide</a>
+</p>
 
-- Imports local video and audio files by picker or drag and drop
-- Previews browser-supported media and selects a trim range
-- Includes five starting presets:
-  - H.264 MP4 for compatibility
-  - compact VP9 WebM
-  - high-quality HEVC MP4
-  - looping GIF
-  - MP3 audio extraction
-- Searches and filters presets by category
-- Favorites, duplicates, deletes, imports, and exports custom presets
-- Adjusts output format, video codec, resolution, frame rate, bitrate, audio,
-  and advanced FFmpeg arguments
-- Generates validated encoding presets from natural-language requests using a
-  configured AI provider
-- Keeps up to 30 AI generations in local history for reuse
-- Adds a multi-file conversion queue with per-file presets and trim ranges,
-  ordering controls, output-size estimates, retry, cancel, and downloads
-- Keeps a private local conversion history with engine, preset, result metadata,
-  failure details, and one-click preset reuse
-- Detects interrupted queues, runs capability and FFmpeg-argument preflight
-  checks, cleans temporary files, and warns before closing active conversions
-- Includes a dedicated bilingual wiki guide at `/guide` with workflow,
-  engine, preset, queue, privacy, and troubleshooting documentation
-- Provides English and Bahasa Indonesia interfaces, light/dark/system themes,
-  and reduced-motion support
-- Registers as a progressive web app and caches the interface and downloaded
-  FFmpeg runtime for later offline use
-- Offers an in-app installation action and a safe update prompt when a new
-  release is ready
+[![OcularMP4 — private local media conversion](public/og-v1.png)](https://ocularmp4.netlify.app)
+
+OcularMP4 is an installable video and audio conversion studio built with
+Next.js and FFmpeg.wasm. It imports media from the user's device, applies a
+reusable encoding preset, converts the file locally in the browser, and returns
+a downloadable result.
+
+The app supports one-off conversions and an ordered batch queue. It also
+includes a versioned preset workspace, local conversion history, optional
+AI-generated FFmpeg presets, bilingual documentation, and offline-aware PWA
+behavior.
+
+## Highlights
+
+- **Local media processing** — source files and converted outputs are not
+  uploaded to the OcularMP4 server.
+- **Two conversion engines** — use the lightweight native browser path for a
+  quick WebM result or FFmpeg.wasm for exact formats and codecs.
+- **Batch queue** — assign a preset and trim range to each file, reorder jobs,
+  estimate output sizes, pause between jobs, retry failures, and download
+  completed files individually.
+- **Preset workspace** — search, filter, favorite, tag, rename, duplicate,
+  delete, import, and export encoding presets.
+- **Optional AI presets** — describe the desired output in plain language and
+  receive a validated preset from one of ten configurable providers.
+- **Local reliability features** — preflight checks, sanitized temporary file
+  names, FFmpeg cleanup, conversion metadata history, interrupted-queue
+  detection, and a warning before closing an active conversion.
+- **Installable PWA** — app-shell caching, cached FFmpeg runtime files,
+  installation controls, connection status, and controlled update prompts.
+- **Bilingual interface** — English and Bahasa Indonesia, including the
+  dedicated guide at `/guide`.
+- **Accessible preferences** — system/light/dark themes and
+  system/full/reduced motion settings.
+
+## How it works
+
+OcularMP4 follows a four-step workflow:
+
+1. **Import** — choose or drop one or more local video or audio files. Select a
+   file to preview it and set its trim range.
+2. **Preset** — start with a built-in profile, reuse a saved preset, import
+   preset JSON, or ask an AI provider to create one.
+3. **Adjust** — review the format, video codec, resolution, frame rate, video
+   bitrate, audio setting, and FFmpeg arguments.
+4. **Export** — run the conversion, preview compatible results, and download
+   the output.
+
+Five built-in presets cover common starting points:
+
+| Preset | Intended result |
+| --- | --- |
+| Quick compatibility share | H.264/AAC MP4 at 720p |
+| Small file for chat | Compact VP9/Opus WebM at 480p |
+| HQ cinematic | High-quality HEVC/AAC MP4 at 1080p |
+| Looping GIF | Palette-optimized 480p GIF |
+| Clean audio extraction | MP3 audio extracted from video |
 
 ## Conversion engines
 
-OcularMP4 has two distinct processing paths.
+The two engines are intentionally different:
 
-| Engine | Implementation | Output behavior | Best for |
-| --- | --- | --- | --- |
-| Native | Canvas capture and `MediaRecorder` | Always produces VP9 WebM video at the selected resolution, frame rate, and video bitrate | Quick, dependency-free video conversion in a compatible browser |
-| FFmpeg.wasm | FFmpeg running in WebAssembly | Uses the selected extension and the preset's FFmpeg arguments | MP4, WebM, MKV, GIF, MP3, AAC, codec control, audio handling, and advanced conversions |
+| | Native browser engine | FFmpeg.wasm |
+| --- | --- | --- |
+| Implementation | Canvas capture and `MediaRecorder` | FFmpeg running in WebAssembly |
+| Output | VP9 WebM video | Output extension and FFmpeg arguments from the selected preset |
+| Startup | Available immediately in compatible browsers | Loaded on demand from `unpkg.com` |
+| Batch queue | Single-file conversion only | Processes queued files sequentially |
+| Best use | Quick video-only WebM conversion | MP4, WebM, MKV, GIF, MP3, AAC, audio handling, and custom codec control |
 
-The native engine does not honor the selected container, codec, audio setting,
-or custom FFmpeg arguments; its output is WebM video. Load and select
-FFmpeg.wasm when the exact preset output matters.
+> **Native-engine limitation:** the native path always records a WebM video
+> stream from a canvas. It does not preserve audio and does not honor the
+> selected container, codec, audio option, or custom FFmpeg arguments. Use
+> FFmpeg.wasm whenever the requested preset output matters.
 
-When multiple files are queued, FFmpeg.wasm processes them sequentially using
-the preset and trim range saved on each job. The lightweight native engine
-remains available for single-file conversions.
+FFmpeg.wasm uses `@ffmpeg/core` 0.12.6. Its first load requires network access;
+the service worker caches the runtime afterward when browser storage and cache
+policies allow it. Conversion speed and practical file size depend on the
+device's CPU, memory, browser, source codec, and selected settings.
 
-FFmpeg is loaded on demand from `unpkg.com` using `@ffmpeg/core` 0.12.6. The
-first load therefore requires network access. The service worker caches the
-downloaded runtime when the browser permits it.
+The app blocks files larger than 2 GB during preflight. This guard is not a
+guarantee that smaller files will fit in available browser memory.
 
-## Typical workflow
+## Batch queue and history
 
-1. Import a local media file and, for previewable video, choose the start and
-   end of the clip.
-2. Select a built-in, custom, imported, or AI-generated preset.
-3. Fine-tune the output settings and FFmpeg arguments.
-4. Choose the native engine or load FFmpeg.wasm from **Settings**.
-5. Start the conversion, keep the tab open, then download the generated file.
+Selecting multiple files creates a queue. Each job keeps its own:
 
-Conversion speed and maximum practical file size depend on the browser,
-available memory, CPU, source codec, and selected settings. FFmpeg.wasm runs
-in-browser and can be substantially slower than a native desktop FFmpeg build.
+- source file and trim range;
+- selected preset;
+- estimated output size;
+- position and status;
+- completed download URL or failure message.
 
-## AI-generated presets
+Batch conversion requires FFmpeg.wasm and runs one job at a time. Pausing takes
+effect before the next queued job; it does not suspend FFmpeg in the middle of
+the current encode. Cancelling terminates the active FFmpeg instance, so the
+runtime must be loaded again before another FFmpeg conversion.
 
-AI is optional and only creates preset metadata and FFmpeg arguments. It does
-not upload or inspect the imported media file.
+OcularMP4 stores a recovery snapshot of queue metadata. After a reload it can
+report which jobs were interrupted, but browsers do not allow the app to
+silently recover the original `File` objects—the user must select those files
+again.
 
-Supported providers:
+Conversion history keeps the 50 most recent completed, failed, or cancelled
+jobs in local storage. It stores result metadata and the preset used, not the
+source media or converted file. Download URLs exist only for the current
+browser session.
 
-| Provider | Request path |
-| --- | --- |
-| OpenAI | App server proxy |
-| Google Gemini | App server proxy |
-| Groq | App server proxy |
-| Anthropic | App server proxy |
-| OpenRouter | App server proxy |
-| Together AI | App server proxy |
-| Mistral AI | App server proxy |
-| DeepSeek | App server proxy |
-| Ollama | Directly from the browser |
-| Custom OpenAI-compatible endpoint | Directly from the browser |
+Output-size estimates are calculated from the trim duration and configured
+bitrates. They are planning estimates, not exact final sizes.
 
-Provider, model, endpoint, and API key are configured in **Settings**. Cloud
-requests send the prompt and API key through the app's API route for that
-request; the server does not persist them. Direct providers are called by the
-browser and may require CORS configuration. For Ollama, allow the app's origin
-with `OLLAMA_ORIGINS`.
+## Presets
 
-Generated responses are validated against the app's preset schema. Inputs,
-outputs, shell commands, pipes, and network URLs are rejected from generated
-FFmpeg arguments.
+A preset contains the settings shown in the interface plus an ordered list of
+FFmpeg arguments. Supported preset values include:
 
-## Privacy and local storage
+- containers: MP4, WebM, GIF, MP3, AAC, and MKV;
+- video codecs: H.264, VP9, HEVC, GIF, or no video;
+- audio codecs: AAC, Opus, MP3, or no audio;
+- resolutions: original, 1080p, 720p, 480p, and 360p;
+- custom frame rate, video bitrate, audio bitrate, volume, tags, and favorite
+  state.
 
-- Imported files and converted outputs remain in browser memory and are not
-  sent to the application server.
-- Settings, custom presets, favorites, and AI history are stored in
-  `localStorage`.
-- API keys use `sessionStorage` by default.
-- Enabling **Remember key on this device** moves the provider key to
-  `localStorage`.
-- Preset exports contain custom presets only and never contain API keys.
-- The app has no database or user-account system.
-
-Clearing site data removes saved settings, presets, history, credentials, and
-cached offline resources.
-
-## Local development
-
-### Requirements
-
-- Node.js 24
-- npm 11
-- A modern browser with `MediaRecorder`, canvas capture, WebAssembly, and
-  service-worker support
-
-### Start the app
-
-```bash
-npm ci
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-No server-owned AI credentials are required. Users supply provider credentials
-through the app. `.env.example` only documents the optional public `APP_URL`
-deployment value.
-
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Start the Next.js development server |
-| `npm run build:next` | Create the Next.js production build |
-| `npm run build` | Build Next.js, package an OpenNext Cloudflare worker, and prepare the Sites bundle |
-| `npm start` | Run the built Next.js app |
-| `npm run lint` | Run ESLint |
-| `npm run test` | Run conversion reliability unit tests |
-| `npm run typecheck` | Run TypeScript without emitting files |
-| `npm run validate` | Run lint, typecheck, and the complete production build |
-| `npm run version:check` | Verify that version references remain synchronized |
-
-## Deployment
-
-The production build targets Cloudflare through OpenNext. `npm run build`
-creates:
-
-- `.next/` — Next.js production output
-- `.open-next/` — Cloudflare worker and static assets
-- `dist/` — packaged Sites deployment artifact
-
-`wrangler.jsonc` points Cloudflare at `.open-next/worker.js`. Cross-origin
-isolation headers are configured in `next.config.ts` for FFmpeg/WebAssembly
-compatibility.
-
-## Project structure
-
-```text
-app/
-  page.tsx                 Main four-step conversion studio
-  api/ai/preset/route.ts   Cloud AI preset generation proxy
-  api/ai/test/route.ts     Cloud provider connection checks
-components/
-  settings-panel.tsx       Preferences, AI, processing, and storage controls
-lib/
-  ai-providers.ts          Provider catalog, request helpers, and preset schema
-  preset-workspace.ts      Preset import/export and AI history persistence
-  settings.ts              Versioned settings and credential storage
-  i18n.ts                  English and Bahasa Indonesia strings
-public/
-  manifest.json            PWA metadata
-  sw.js                    App-shell and FFmpeg runtime caching
-```
-
-## Preset files
-
-Preset exports use a versioned JSON envelope:
+Preset imports accept a single preset, an array, or the app's versioned export
+envelope. Imports are validated and limited to 100 presets at a time. Exported
+files contain non-built-in presets and never include provider credentials.
 
 ```json
 {
@@ -202,17 +149,163 @@ Preset exports use a versioned JSON envelope:
 }
 ```
 
-Imports may be a versioned export, an array of presets, or one preset object.
-Each preset is validated before being stored, and an import is limited to 100
-presets.
+FFmpeg arguments are checked before conversion. OcularMP4 rejects extra input
+arguments, network and file URLs, pipes, concat sources, script-based filters,
+progress redirection, and argument lists longer than 100 entries.
 
-## Versioning
+## AI-generated presets
 
-The current application version is `1.0.0`. OcularMP4 follows Semantic
-Versioning and uses Conventional Commit messages and `vX.Y.Z` release tags.
+AI is optional. It generates preset metadata and FFmpeg arguments from a text
+request; it never receives or inspects the imported media.
 
-When releasing a new version, update the version in `package.json` and
-`public/sw.js`, then run:
+| Provider | Connection |
+| --- | --- |
+| OpenAI | Through the OcularMP4 API route |
+| Google Gemini | Through the OcularMP4 API route |
+| Groq | Through the OcularMP4 API route |
+| Anthropic | Through the OcularMP4 API route |
+| OpenRouter | Through the OcularMP4 API route |
+| Together AI | Through the OcularMP4 API route |
+| Mistral AI | Through the OcularMP4 API route |
+| DeepSeek | Through the OcularMP4 API route |
+| Ollama | Directly from the browser |
+| Custom OpenAI-compatible endpoint | Directly from the browser |
+
+The provider, model, endpoint, and credential are configured in **Settings**.
+Cloud-provider requests send the prompt and temporary API key through the
+app's server route for the current request. The repository has no server-side
+credential store. Ollama and custom endpoints are contacted directly by the
+browser and may require CORS configuration; Ollama users can allow the site's
+origin with `OLLAMA_ORIGINS`.
+
+Generated responses must match the app's preset schema before they can be
+saved. The 30 most recent successful AI generations are stored locally and can
+be restored without sending the prompt again.
+
+## Privacy and browser storage
+
+OcularMP4 has no accounts, database, or media-upload endpoint.
+
+| Data | Storage |
+| --- | --- |
+| Imported media | Browser memory for the current session |
+| Converted output | Browser memory as a temporary object URL |
+| Settings and custom presets | `localStorage` |
+| AI generation history | `localStorage`, up to 30 entries |
+| Conversion metadata history | `localStorage`, up to 50 entries |
+| Queue recovery metadata | `localStorage` |
+| API keys | `sessionStorage` by default |
+| Remembered API keys | `localStorage`, only when explicitly enabled |
+| App shell and FFmpeg runtime | Browser Cache Storage |
+
+Cloud AI still requires a network request to the selected provider. Clearing
+the site's browser data removes saved settings, presets, histories,
+credentials, recovery metadata, and offline caches.
+
+## Offline and installation behavior
+
+The PWA manifest allows OcularMP4 to run in a standalone window. The service
+worker precaches the studio, guide, manifest, icons, and social image. Local
+assets use stale-while-revalidate caching, while FFmpeg CDN files use a
+cache-first strategy.
+
+Offline behavior has boundaries:
+
+- previously cached app routes and assets can open offline;
+- the native engine can work without downloading FFmpeg;
+- FFmpeg conversion works offline only after the runtime has loaded and cached
+  successfully;
+- cloud AI providers require a network connection;
+- local Ollama can work without internet access when the browser can reach it.
+
+When a new service worker is ready, the app presents an update action and waits
+for user confirmation before activating it. Updating is disabled during an
+active conversion.
+
+## Local development
+
+### Requirements
+
+- Node.js 24
+- npm 11
+- a modern browser with WebAssembly and service-worker support;
+- `MediaRecorder` and `HTMLCanvasElement.captureStream()` for the native engine.
+
+### Start the development server
+
+```bash
+npm ci
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+OcularMP4 does not need server-owned AI secrets. Users enter provider
+credentials in the app. The only documented environment value is the optional
+public URL used when generating social metadata:
+
+```bash
+APP_URL="http://localhost:3000"
+```
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the Next.js development server |
+| `npm run test` | Run conversion reliability and PWA tests |
+| `npm run lint` | Run ESLint |
+| `npm run typecheck` | Check TypeScript without emitting files |
+| `npm run build:next` | Create the Next.js production build |
+| `npm run build` | Build Next.js, create the OpenNext Cloudflare worker, and package the Sites artifact |
+| `npm run validate` | Run lint, tests, typecheck, and the complete production build |
+| `npm run version:check` | Check synchronized release-version references |
+| `npm start` | Run the built Next.js server |
+
+## Project structure
+
+```text
+app/
+  page.tsx                   Main studio, queue, conversion engines, and PWA UI
+  guide/page.tsx             Bilingual product guide
+  api/ai/preset/route.ts     Cloud AI preset-generation proxy
+  api/ai/test/route.ts       Cloud provider connection checks
+components/
+  settings-panel.tsx         General, AI, processing, and storage settings
+lib/
+  ai-providers.ts            Provider catalog, requests, and preset validation
+  conversion-reliability.ts Queue recovery, preflight, estimates, and filenames
+  preset-workspace.ts        Preset and history persistence
+  settings.ts                Versioned preferences and credential storage
+  i18n.ts                    English and Bahasa Indonesia interface strings
+public/
+  manifest.json              PWA metadata
+  sw.js                      Offline cache and update lifecycle
+tests/
+  conversion-reliability.test.ts
+  pwa.test.ts
+```
+
+## Deployment and releases
+
+The official public deployment is
+[ocularmp4.netlify.app](https://ocularmp4.netlify.app).
+
+The repository also contains an OpenNext Cloudflare configuration.
+`npm run build` produces:
+
+- `.next/` — Next.js production output;
+- `.open-next/` — the Cloudflare worker and static assets;
+- `dist/` — the packaged Sites artifact.
+
+Cross-origin opener and embedder headers are configured for WebAssembly
+compatibility.
+
+OcularMP4 follows Semantic Versioning. The current version is `1.0.0`. Release
+versions must remain synchronized between `package.json`, the settings panel,
+the service worker, and PWA checks.
+
+Before releasing:
 
 ```bash
 npm run version:check
