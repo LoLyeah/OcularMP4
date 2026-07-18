@@ -75,7 +75,26 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 2. Stale-While-Revalidate for local assets and standard pages
+  // 2. Network-first navigation keeps installed copies current while
+  // preserving the cached app shell for offline launches.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request).then((networkResponse) => {
+        if (networkResponse.status === 200) {
+          const cacheCopy = networkResponse.clone();
+          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, cacheCopy));
+        }
+        return networkResponse;
+      }).catch(async () => (
+        await caches.match(request)
+        || await caches.match(url.pathname)
+        || await caches.match('/')
+      ))
+    );
+    return;
+  }
+
+  // 3. Stale-While-Revalidate for local assets.
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
       const fetchPromise = fetch(request).then((networkResponse) => {
