@@ -33,9 +33,23 @@ export interface AIHistoryItem {
   preset: Omit<Preset, 'id' | 'favorite' | 'tags' | 'source'>;
 }
 
+export interface ConversionHistoryItem {
+  id: string;
+  fileName: string;
+  outputName?: string;
+  outputSize?: string;
+  status: 'completed' | 'failed' | 'cancelled';
+  engine: 'native' | 'ffmpeg';
+  presetName: string;
+  preset: Preset;
+  createdAt: string;
+  error?: string;
+}
+
 export const PRESETS_STORAGE_KEY = 'ocularmp4.presets.v2';
 export const LEGACY_PRESETS_STORAGE_KEY = 'ocularmp4.presets.v1';
 export const AI_HISTORY_STORAGE_KEY = 'ocularmp4.ai-history.v1';
+export const CONVERSION_HISTORY_STORAGE_KEY = 'ocularmp4.conversion-history.v1';
 export const WORKSPACE_SCHEMA_VERSION = 2;
 
 function cleanPreset(value: unknown, source: Preset['source'] = 'imported'): Preset {
@@ -96,4 +110,19 @@ export function readAIHistory(): AIHistoryItem[] {
 export function writeAIHistory(items: AIHistoryItem[]) {
   if (typeof window === 'undefined') return;
   localStorage.setItem(AI_HISTORY_STORAGE_KEY, JSON.stringify(items.slice(0, 30)));
+}
+
+export function readConversionHistory(): ConversionHistoryItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CONVERSION_HISTORY_STORAGE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.slice(0, 50) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeConversionHistory(items: ConversionHistoryItem[]) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(CONVERSION_HISTORY_STORAGE_KEY, JSON.stringify(items.slice(0, 50)));
 }

@@ -30,6 +30,8 @@ arguments.
 - Keeps up to 30 AI generations in local history for reuse
 - Adds a multi-file conversion queue with sequential processing, per-job status,
   retry, cancel, and individual downloads
+- Keeps a private local conversion history with engine, preset, result metadata,
+  failure details, and one-click preset reuse
 - Includes a dedicated bilingual wiki guide at `/guide` with workflow,
   engine, preset, queue, privacy, and troubleshooting documentation
 - Provides English and Bahasa Indonesia interfaces, light/dark/system themes,
@@ -201,7 +203,7 @@ presets.
 
 ## Versioning
 
-The current application version is `0.6.0`. OcularMP4 follows Semantic
+The current application version is `0.7.0`. OcularMP4 follows Semantic
 Versioning and uses Conventional Commit messages and `vX.Y.Z` release tags.
 
 When releasing a new version, update the version in `package.json` and

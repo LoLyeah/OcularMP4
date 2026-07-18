@@ -14,8 +14,9 @@ import { translations, type Locale, type TranslationKey } from '../lib/i18n';
 import { generateDirectPreset, getAIProvider } from '../lib/ai-providers';
 import { DEFAULT_SETTINGS, readAICredential, readSettings, writeSettings, type AppSettings } from '../lib/settings';
 import {
-  AI_HISTORY_STORAGE_KEY, PRESETS_STORAGE_KEY, parseImportedPresets, readAIHistory, readStoredPresets,
-  writeAIHistory, writeStoredPresets, type AIHistoryItem, type Preset, type PresetSettings,
+  AI_HISTORY_STORAGE_KEY, CONVERSION_HISTORY_STORAGE_KEY, PRESETS_STORAGE_KEY, parseImportedPresets, readAIHistory,
+  readConversionHistory, readStoredPresets, writeAIHistory, writeConversionHistory, writeStoredPresets,
+  type AIHistoryItem, type ConversionHistoryItem, type Preset, type PresetSettings,
 } from '../lib/preset-workspace';
 import { SettingsPanel } from '../components/settings-panel';
 
@@ -117,6 +118,9 @@ export default function PresetStudio() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [presets, setPresets] = useState<Preset[]>(DEFAULT_PRESETS);
   const [aiHistory, setAiHistory] = useState<AIHistoryItem[]>([]);
+  const [conversionHistory, setConversionHistory] = useState<ConversionHistoryItem[]>([]);
+  const [showConversionHistory, setShowConversionHistory] = useState(false);
+  const conversionHistoryRef = useRef<ConversionHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [activePreset, setActivePreset] = useState<Preset>(DEFAULT_PRESETS[0]);
   const [category, setCategory] = useState<(typeof categories)[number]>('all');
@@ -198,6 +202,9 @@ export default function PresetStudio() {
       try {
         setPresets(readStoredPresets(DEFAULT_PRESETS));
         setAiHistory(readAIHistory());
+        const storedConversions = readConversionHistory();
+        conversionHistoryRef.current = storedConversions;
+        setConversionHistory(storedConversions);
       } catch { /* preserve defaults when storage is invalid */ }
       setSettingsReady(true);
     }, 0);
@@ -302,6 +309,13 @@ export default function PresetStudio() {
   };
 
   const log = (message: string) => setLogs((items) => [...items.slice(-80), `[${new Date().toLocaleTimeString()}] ${message}`]);
+
+  const recordConversion = (item: Omit<ConversionHistoryItem, 'id' | 'createdAt'>) => {
+    const next: ConversionHistoryItem[] = [{ ...item, id: uniqueId('conversion'), createdAt: new Date().toISOString() }, ...conversionHistoryRef.current].slice(0, 50);
+    conversionHistoryRef.current = next;
+    setConversionHistory(next);
+    writeConversionHistory(next);
+  };
 
   const updateSettings = (patch: Partial<AppSettings>) => {
     setSettings((current) => ({ ...current, ...patch }));
@@ -468,6 +482,7 @@ export default function PresetStudio() {
         setOutputName(outputFileName);
         setOutputSize(formatBytes(blob.size));
         if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
+        recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: activePreset.name, preset: activePreset });
         await ffmpeg.deleteFile(inputName);
         await ffmpeg.deleteFile(output);
       } else {
@@ -490,6 +505,7 @@ export default function PresetStudio() {
             setOutputName(outputFileName);
             setOutputSize(formatBytes(blob.size));
             if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'completed', progress: 100, outputUrl: URL.createObjectURL(blob), outputName: outputFileName, outputSize: formatBytes(blob.size) } : job));
+            recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: activePreset.name, preset: activePreset });
             resolve();
           };
         });
@@ -518,6 +534,7 @@ export default function PresetStudio() {
       }
     } catch (error: any) {
       if (jobId) setQueue((current) => current.map((job) => job.id === jobId ? { ...job, status: 'failed', error: error?.message || t('error') } : job));
+      recordConversion({ fileName: workingFile.name, status: 'failed', engine, presetName: activePreset.name, preset: activePreset, error: error?.message || t('error') });
       setToast(error?.message || t('error'));
     } finally {
     }
@@ -669,7 +686,9 @@ export default function PresetStudio() {
                 </section>}
 
                 {step === 3 && <section className="space-y-5">
-                  {outputUrl ? <div className="overflow-hidden rounded-3xl border border-emerald-300/30 bg-emerald-300/5"><div className="flex items-center gap-3 border-b border-emerald-300/20 p-5"><CheckCircle2 className="h-6 w-6 text-emerald-200" /><div><h2 className="font-semibold text-white">{t('complete')}</h2><p className="text-xs text-slate-400">{outputName} · {outputSize} {elapsed ? `· ${elapsed}s ${t('elapsed')}` : ''}</p></div></div><div className="aspect-video bg-black"><video src={outputUrl} controls autoPlay className="h-full w-full object-contain" /></div><a href={outputUrl} download={outputName} className="m-5 block rounded-xl bg-emerald-300 px-4 py-3 text-center text-sm font-semibold text-[#0b1020]"><Download className="mr-2 inline h-4 w-4" />{t('download')}</a></div> : <div className="rounded-3xl border border-dashed border-white/10 bg-[#111a30] p-12 text-center text-sm text-slate-500">{t('emptyOutput')}</div>}<button onClick={() => setStep(0)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('importStep')}</button></section>}
+                  {outputUrl ? <div className="overflow-hidden rounded-3xl border border-emerald-300/30 bg-emerald-300/5"><div className="flex items-center gap-3 border-b border-emerald-300/20 p-5"><CheckCircle2 className="h-6 w-6 text-emerald-200" /><div><h2 className="font-semibold text-white">{t('complete')}</h2><p className="text-xs text-slate-400">{outputName} · {outputSize} {elapsed ? `· ${elapsed}s ${t('elapsed')}` : ''}</p></div></div><div className="aspect-video bg-black"><video src={outputUrl} controls autoPlay className="h-full w-full object-contain" /></div><a href={outputUrl} download={outputName} className="m-5 block rounded-xl bg-emerald-300 px-4 py-3 text-center text-sm font-semibold text-[#0b1020]"><Download className="mr-2 inline h-4 w-4" />{t('download')}</a></div> : <div className="rounded-3xl border border-dashed border-white/10 bg-[#111a30] p-12 text-center text-sm text-slate-500">{t('emptyOutput')}</div>}
+                  {conversionHistory.length > 0 && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex items-center justify-between gap-3"><button onClick={() => setShowConversionHistory((value) => !value)} aria-expanded={showConversionHistory} className="flex items-center gap-2 text-sm font-semibold text-white"><History className="h-4 w-4 text-cyan-200" />{t('conversionHistory')} ({conversionHistory.length})<ChevronDown className={`h-4 w-4 text-slate-500 transition ${showConversionHistory ? 'rotate-180' : ''}`} /></button>{showConversionHistory && <button onClick={() => { conversionHistoryRef.current = []; setConversionHistory([]); writeConversionHistory([]); localStorage.removeItem(CONVERSION_HISTORY_STORAGE_KEY); }} className="text-xs text-slate-400 hover:text-rose-200">{t('clearHistory')}</button>}</div>{showConversionHistory && <div className="mt-3 space-y-2">{conversionHistory.slice(0, 12).map((item) => <div key={item.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-black/15 p-3"><div className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${item.status === 'completed' ? 'bg-emerald-300/10 text-emerald-200' : 'bg-rose-300/10 text-rose-200'}`}>{item.status === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-medium text-white">{item.fileName}</div><div className="truncate text-[11px] text-slate-500">{item.status === 'failed' ? item.error : `${item.outputName} · ${item.outputSize}`} · {item.engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')}</div></div><button onClick={() => { selectPreset(item.preset); setStep(2); setToast(t('historyPresetLoaded')); }} className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-cyan-100 hover:bg-cyan-300/10">{t('reusePreset')}</button></div>)}</div>}</div>}
+                  <button onClick={() => setStep(0)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('importStep')}</button></section>}
               </motion.div>
             </AnimatePresence>
           </div>
