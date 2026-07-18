@@ -21,6 +21,7 @@ const content = {
       ['presets', 'Presets and AI generation'],
       ['queue', 'Batch conversion queue'],
       ['privacy', 'Privacy and offline behavior'],
+      ['install', 'Install and update the app'],
       ['troubleshooting', 'Troubleshooting'],
     ],
     overviewTitle: 'Overview',
@@ -45,6 +46,8 @@ const content = {
     queueTips: ['Choose a preset on each queue card and select the file to adjust its trim range.', 'Use the arrow controls to set processing order and review the estimated output size before starting.', 'Pause waits until the current file finishes; failed jobs can be retried and completed jobs remain downloadable.'],
     privacyTitle: 'Privacy and offline behavior',
     privacyBody: 'Local conversion does not upload media. Settings, custom presets, favorites, and AI history use device-local storage. Cloud AI sends only the prompt and temporary credential for the current request. Ollama and custom local endpoints connect directly from the browser.',
+    installTitle: 'Install and update the app',
+    installBody: 'When your browser supports installation, use Install app in the studio header to add OcularMP4 to your home screen or application launcher. The studio and guide are cached for offline access. When an update is ready, save active work and choose Update now; the app reloads into the new version.',
     troubleshootingTitle: 'Troubleshooting',
     troubleshooting: [
       ['The output is always WebM', 'The Native engine is selected. Load FFmpeg.wasm in Settings and select the FFmpeg engine for exact format output.'],
@@ -68,6 +71,7 @@ const content = {
       ['presets', 'Preset dan pembuatan AI'],
       ['queue', 'Antrean konversi batch'],
       ['privacy', 'Privasi dan mode offline'],
+      ['install', 'Instal dan perbarui aplikasi'],
       ['troubleshooting', 'Pemecahan masalah'],
     ],
     overviewTitle: 'Ringkasan',
@@ -92,6 +96,8 @@ const content = {
     queueTips: ['Pilih preset pada setiap kartu antrean dan pilih filenya untuk mengatur rentang potong.', 'Gunakan kontrol panah untuk menentukan urutan dan periksa perkiraan ukuran hasil sebelum memulai.', 'Jeda menunggu file saat ini selesai; pekerjaan gagal dapat dicoba ulang dan hasil selesai tetap dapat diunduh.'],
     privacyTitle: 'Privasi dan mode offline',
     privacyBody: 'Konversi lokal tidak mengunggah media. Pengaturan, preset kustom, favorit, dan riwayat AI menggunakan penyimpanan lokal perangkat. AI cloud hanya menerima prompt dan kredensial sementara untuk permintaan saat ini. Ollama dan endpoint lokal terhubung langsung dari browser.',
+    installTitle: 'Instal dan perbarui aplikasi',
+    installBody: 'Jika browser mendukung instalasi, gunakan Instal aplikasi di header studio untuk menambahkan OcularMP4 ke layar utama atau peluncur aplikasi. Studio dan panduan disimpan untuk akses offline. Saat pembaruan siap, simpan pekerjaan aktif lalu pilih Perbarui sekarang; aplikasi akan dimuat ulang ke versi baru.',
     troubleshootingTitle: 'Pemecahan masalah',
     troubleshooting: [
       ['Hasil selalu WebM', 'Mesin Native sedang dipilih. Muat FFmpeg.wasm di Pengaturan dan pilih mesin FFmpeg untuk format output yang presisi.'],
@@ -141,6 +147,7 @@ export default function GuidePage() {
           <GuideSection id="presets" title={copy.presetsTitle} icon={Sparkles}><p>{copy.presetsBody}</p><ol className="mt-5 space-y-3">{copy.aiSteps.map((item, index) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" /><span>{index + 1}. {item}</span></li>)}</ol></GuideSection>
           <GuideSection id="queue" title={copy.queueTitle} icon={Download}><p>{copy.queueBody}</p><ul className="mt-5 space-y-3">{copy.queueTips.map((item) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" /><span>{item}</span></li>)}</ul></GuideSection>
           <GuideSection id="privacy" title={copy.privacyTitle} icon={LockKeyhole}><p>{copy.privacyBody}</p></GuideSection>
+          <GuideSection id="install" title={copy.installTitle} icon={Download}><p>{copy.installBody}</p></GuideSection>
           <GuideSection id="troubleshooting" title={copy.troubleshootingTitle} icon={Settings2}><div className="space-y-3">{copy.troubleshooting.map(([title, body]) => <details key={title} className="group rounded-2xl border border-white/10 bg-[#111a30] p-4"><summary className="cursor-pointer list-none font-medium text-white">{title}<ChevronRight className="float-right h-4 w-4 text-slate-500 transition group-open:rotate-90" /></summary><p className="pt-3">{body}</p></details>)}</div></GuideSection>
           <div className="mt-14 flex flex-col items-start justify-between gap-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-6 sm:flex-row sm:items-center"><div><p className="text-sm text-slate-300">{copy.footer}</p></div><Link href="/" className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><Play className="mr-2 inline h-4 w-4" />{copy.openStudio}</Link></div>
         </article>

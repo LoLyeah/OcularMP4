@@ -40,6 +40,8 @@ arguments.
   and reduced-motion support
 - Registers as a progressive web app and caches the interface and downloaded
   FFmpeg runtime for later offline use
+- Offers an in-app installation action and a safe update prompt when a new
+  release is ready
 
 ## Conversion engines
 
@@ -206,7 +208,7 @@ presets.
 
 ## Versioning
 
-The current application version is `0.9.0`. OcularMP4 follows Semantic
+The current application version is `1.0.0`. OcularMP4 follows Semantic
 Versioning and uses Conventional Commit messages and `vX.Y.Z` release tags.
 
 When releasing a new version, update the version in `package.json` and

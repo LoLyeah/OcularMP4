@@ -15,13 +15,13 @@ export const metadata: Metadata = {
     title: 'OcularMP4 — Private media conversion',
     description: 'Batch queue, AI presets, and offline-ready local media conversion.',
     type: 'website',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'OcularMP4 private local media conversion' }],
+    images: [{ url: '/og-v1.png', width: 1200, height: 630, alt: 'OcularMP4 private local media conversion' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'OcularMP4 — Private media conversion',
     description: 'Batch queue, AI presets, and offline-ready local media conversion.',
-    images: ['/og.png'],
+    images: ['/og-v1.png'],
   },
 };
 

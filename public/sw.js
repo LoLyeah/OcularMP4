@@ -1,14 +1,15 @@
-const APP_VERSION = '0.9.0';
+const APP_VERSION = '1.0.0';
 const CACHE_NAME = `ocularmp4-app-v${APP_VERSION}`;
 const RUNTIME_CACHE = `ocularmp4-runtime-v${APP_VERSION}`;
 
 // Static assets to precache on install
 const PRECACHE_ASSETS = [
   '/',
+  '/guide',
   '/manifest.json',
   '/favicon.svg',
   '/logo-mark.svg',
-  '/og.png',
+  '/og-v1.png',
   '/icon-192.svg',
   '/icon-512.svg'
 ];
@@ -17,8 +18,13 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.addAll(PRECACHE_ASSETS))
-      .then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('activate', (event) => {

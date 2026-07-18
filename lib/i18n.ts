@@ -183,6 +183,12 @@ export const translations = {
     estimatedOutput: 'Estimated output',
     moveUp: 'Move up',
     moveDown: 'Move down',
+    installApp: 'Install app',
+    installAppBody: 'Add OcularMP4 to your device for faster launch and offline access.',
+    updateAvailable: 'Update available',
+    updateAvailableBody: 'A new version is ready. Update after saving any active work.',
+    updateNow: 'Update now',
+    appInstalled: 'OcularMP4 installed.',
   },
   id: {
     appName: 'OcularMP4',
@@ -364,6 +370,12 @@ export const translations = {
     estimatedOutput: 'Perkiraan hasil',
     moveUp: 'Pindah ke atas',
     moveDown: 'Pindah ke bawah',
+    installApp: 'Instal aplikasi',
+    installAppBody: 'Tambahkan OcularMP4 ke perangkat agar lebih cepat dibuka dan dapat digunakan offline.',
+    updateAvailable: 'Pembaruan tersedia',
+    updateAvailableBody: 'Versi baru sudah siap. Perbarui setelah menyimpan pekerjaan yang aktif.',
+    updateNow: 'Perbarui sekarang',
+    appInstalled: 'OcularMP4 terinstal.',
   },
 } as const;
 

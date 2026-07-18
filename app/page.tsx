@@ -70,6 +70,10 @@ const DEFAULT_PRESETS: Preset[] = [
 const categories: Array<'all' | Preset['category']> = ['all', 'compatible', 'size', 'hq', 'audio', 'gif', 'custom'];
 const categoryKey: Record<string, TranslationKey> = { all: 'all', compatible: 'compatible', size: 'small', hq: 'quality', audio: 'audio', gif: 'gif', custom: 'custom' };
 type QueueStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 interface QueueJob {
   id: string;
   file: File;
@@ -151,6 +155,10 @@ export default function PresetStudio() {
   const [logs, setLogs] = useState<string[]>(['Native browser engine ready.']);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [updateWorker, setUpdateWorker] = useState<ServiceWorker | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -238,10 +246,63 @@ export default function PresetStudio() {
       } catch { /* preserve defaults when storage is invalid */ }
       setSettingsReady(true);
     }, 0);
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => undefined);
-    }
     return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const standalone = window.matchMedia('(display-mode: standalone)');
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    const updateDisplayMode = () => setIsStandalone(standalone.matches);
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => {
+      setInstallPrompt(null);
+      setIsStandalone(true);
+      const activeLocale: Locale = document.documentElement.lang === 'id' ? 'id' : 'en';
+      setToast(translations[activeLocale].appInstalled);
+    };
+
+    updateConnection();
+    updateDisplayMode();
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    standalone.addEventListener('change', updateDisplayMode);
+    window.addEventListener('beforeinstallprompt', captureInstallPrompt);
+    window.addEventListener('appinstalled', handleInstalled);
+
+    let refreshing = false;
+    const handleControllerChange = () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker?.addEventListener('controllerchange', handleControllerChange);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then((registration) => {
+        if (registration.waiting) setUpdateWorker(registration.waiting);
+        const watchInstallingWorker = () => {
+          const worker = registration.installing;
+          worker?.addEventListener('statechange', () => {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              setUpdateWorker(worker);
+            }
+          });
+        };
+        registration.addEventListener('updatefound', watchInstallingWorker);
+      }).catch(() => undefined);
+    }
+
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+      standalone.removeEventListener('change', updateDisplayMode);
+      window.removeEventListener('beforeinstallprompt', captureInstallPrompt);
+      window.removeEventListener('appinstalled', handleInstalled);
+      navigator.serviceWorker?.removeEventListener('controllerchange', handleControllerChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -761,6 +822,17 @@ export default function PresetStudio() {
     setQueue((current) => current.filter((job) => job.status !== 'completed'));
   };
 
+  const installApp = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === 'accepted') setInstallPrompt(null);
+  };
+
+  const applyAppUpdate = () => {
+    updateWorker?.postMessage({ type: 'SKIP_WAITING' });
+  };
+
   const steps = [t('importStep'), t('presetStep'), t('adjustStep'), t('exportStep')];
 
   return (
@@ -785,10 +857,21 @@ export default function PresetStudio() {
             <div className="hidden items-center rounded-lg border border-white/10 bg-black/20 p-0.5 sm:flex" aria-label={t('language')}>
               {(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => updateSettings({ locale: item })} className={`rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}
             </div>
+            {!isStandalone && installPrompt && <button onClick={installApp} className="hidden rounded-xl border border-cyan-300/25 px-3 py-2.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10 sm:inline-flex"><Download className="mr-1.5 h-4 w-4" />{t('installApp')}</button>}
             <button onClick={() => setPanel('settings')} aria-label={t('settings')} className="rounded-xl border border-white/10 p-2.5 text-slate-300 transition hover:border-cyan-300/50 hover:text-white"><Settings2 className="h-5 w-5" /></button>
             <Link href="/guide" className="rounded-xl border border-white/10 p-2.5 text-slate-300 md:hidden" aria-label={t('guide')}><Menu className="h-5 w-5" /></Link>
           </div>
         </header>
+
+        {updateWorker && <section role="status" className="mb-5 flex flex-col gap-3 rounded-2xl border border-indigo-300/25 bg-indigo-300/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div><div className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-indigo-200" />{t('updateAvailable')}</div><p className="mt-1 text-xs text-slate-400">{t('updateAvailableBody')}</p></div>
+          <button onClick={applyAppUpdate} disabled={transcoding} className="shrink-0 rounded-xl bg-indigo-300 px-4 py-2.5 text-xs font-semibold text-[#0b1020] disabled:opacity-40">{t('updateNow')}</button>
+        </section>}
+
+        {!isStandalone && installPrompt && <section className="mb-5 flex flex-col gap-3 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-4 sm:hidden">
+          <div><div className="text-sm font-semibold text-white">{t('installApp')}</div><p className="mt-1 text-xs leading-5 text-slate-400">{t('installAppBody')}</p></div>
+          <button onClick={installApp} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-xs font-semibold text-[#0b1020]"><Download className="mr-1.5 inline h-4 w-4" />{t('installApp')}</button>
+        </section>}
 
         <section className="mb-7 grid gap-5 lg:grid-cols-[220px_1fr]">
           <aside className="hidden rounded-2xl border border-white/10 bg-[#111a30] p-3 lg:block">
@@ -878,7 +961,7 @@ export default function PresetStudio() {
           </div>
         </section>
 
-        <footer className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#111a30] p-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap items-center gap-2"><span className={`h-2 w-2 rounded-full ${typeof navigator !== 'undefined' && navigator.onLine ? 'bg-cyan-300' : 'bg-amber-300'}`} />{typeof navigator !== 'undefined' && navigator.onLine ? t('online') : t('offline')} · {t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')} · AI: {getAIProvider(settings.aiProvider).name} / {settings.aiModel}</div><button onClick={() => setShowDiagnostics((value) => !value)} className="text-left hover:text-slate-300">{t('diagnostics')} <ChevronDown className="ml-1 inline h-3.5 w-3.5" /></button></footer>
+        <footer className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#111a30] p-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between"><div className="flex flex-wrap items-center gap-2"><span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-cyan-300' : 'bg-amber-300'}`} />{isOnline ? t('online') : t('offline')} · {t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')} · AI: {getAIProvider(settings.aiProvider).name} / {settings.aiModel}</div><button onClick={() => setShowDiagnostics((value) => !value)} className="text-left hover:text-slate-300">{t('diagnostics')} <ChevronDown className="ml-1 inline h-3.5 w-3.5" /></button></footer>
         {showDiagnostics && <div className="mt-3 rounded-2xl border border-white/10 bg-black/20 p-4 font-mono text-[11px] text-slate-500"><div className="mb-2 flex justify-between"><span>{logs.length} events</span><button onClick={() => setLogs([])}>{t('clear')}</button></div>{logs.map((item, index) => <div key={`${item}-${index}`} className="border-l border-cyan-300/20 py-0.5 pl-2">{item}</div>)}</div>}
       </div>
 
