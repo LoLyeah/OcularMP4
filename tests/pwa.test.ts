@@ -16,4 +16,6 @@ test('service worker precaches the guide and supports controlled updates', async
   assert.match(serviceWorker, /'\/guide'/);
   assert.match(serviceWorker, /SKIP_WAITING/);
   assert.match(serviceWorker, /self\.skipWaiting\(\)/);
+  assert.match(serviceWorker, /request\.mode === 'navigate'/);
+  assert.match(serviceWorker, /fetch\(request\)/);
 });

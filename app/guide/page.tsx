@@ -3,9 +3,15 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { ArrowLeft, BookOpen, CheckCircle2, ChevronRight, Cpu, Download, LockKeyhole, Play, Settings2, Sparkles, Workflow } from 'lucide-react';
 import { readSettings } from '../../lib/settings';
 import type { Locale } from '../../lib/i18n';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 const content = {
   en: {
@@ -21,7 +27,7 @@ const content = {
       ['presets', 'Presets and AI generation'],
       ['queue', 'Batch conversion queue'],
       ['privacy', 'Privacy and offline behavior'],
-      ['install', 'Install and update the app'],
+      ['pwa', 'Install the PWA'],
       ['troubleshooting', 'Troubleshooting'],
     ],
     overviewTitle: 'Overview',
@@ -46,8 +52,11 @@ const content = {
     queueTips: ['Choose a preset on each queue card and select the file to adjust its trim range.', 'Use the arrow controls to set processing order and review the estimated output size before starting.', 'Pause waits until the current file finishes; failed jobs can be retried and completed jobs remain downloadable.'],
     privacyTitle: 'Privacy and offline behavior',
     privacyBody: 'Local conversion does not upload media. Settings, custom presets, favorites, and AI history use device-local storage. Cloud AI sends only the prompt and temporary credential for the current request. Ollama and custom local endpoints connect directly from the browser.',
-    installTitle: 'Install and update the app',
-    installBody: 'When your browser supports installation, use Install app in the studio header to add OcularMP4 to your home screen or application launcher. The studio and guide are cached for offline access. When an update is ready, save active work and choose Update now; the app reloads into the new version.',
+    installTitle: 'Install OcularMP4 as a PWA',
+    installBody: 'Install OcularMP4 for a dedicated app window, faster launches, and offline access to the studio and guide. The installed app checks for updates on launch and whenever it returns to the foreground. When a new version is ready, choose Update now in the update toast.',
+    installPwa: 'Install PWA',
+    pwaInstalled: 'PWA installed',
+    pwaUnavailable: 'Install from your browser menu',
     troubleshootingTitle: 'Troubleshooting',
     troubleshooting: [
       ['The output is always WebM', 'The Native engine is selected. Load FFmpeg.wasm in Settings and select the FFmpeg engine for exact format output.'],
@@ -71,7 +80,7 @@ const content = {
       ['presets', 'Preset dan pembuatan AI'],
       ['queue', 'Antrean konversi batch'],
       ['privacy', 'Privasi dan mode offline'],
-      ['install', 'Instal dan perbarui aplikasi'],
+      ['pwa', 'Instal PWA'],
       ['troubleshooting', 'Pemecahan masalah'],
     ],
     overviewTitle: 'Ringkasan',
@@ -96,8 +105,11 @@ const content = {
     queueTips: ['Pilih preset pada setiap kartu antrean dan pilih filenya untuk mengatur rentang potong.', 'Gunakan kontrol panah untuk menentukan urutan dan periksa perkiraan ukuran hasil sebelum memulai.', 'Jeda menunggu file saat ini selesai; pekerjaan gagal dapat dicoba ulang dan hasil selesai tetap dapat diunduh.'],
     privacyTitle: 'Privasi dan mode offline',
     privacyBody: 'Konversi lokal tidak mengunggah media. Pengaturan, preset kustom, favorit, dan riwayat AI menggunakan penyimpanan lokal perangkat. AI cloud hanya menerima prompt dan kredensial sementara untuk permintaan saat ini. Ollama dan endpoint lokal terhubung langsung dari browser.',
-    installTitle: 'Instal dan perbarui aplikasi',
-    installBody: 'Jika browser mendukung instalasi, gunakan Instal aplikasi di header studio untuk menambahkan OcularMP4 ke layar utama atau peluncur aplikasi. Studio dan panduan disimpan untuk akses offline. Saat pembaruan siap, simpan pekerjaan aktif lalu pilih Perbarui sekarang; aplikasi akan dimuat ulang ke versi baru.',
+    installTitle: 'Instal OcularMP4 sebagai PWA',
+    installBody: 'Instal OcularMP4 untuk jendela aplikasi khusus, pembukaan lebih cepat, serta akses offline ke studio dan panduan. Aplikasi terinstal memeriksa pembaruan saat dibuka dan setiap kali kembali aktif. Saat versi baru siap, pilih Perbarui sekarang pada notifikasi pembaruan.',
+    installPwa: 'Instal PWA',
+    pwaInstalled: 'PWA terinstal',
+    pwaUnavailable: 'Instal dari menu browser',
     troubleshootingTitle: 'Pemecahan masalah',
     troubleshooting: [
       ['Hasil selalu WebM', 'Mesin Native sedang dipilih. Muat FFmpeg.wasm di Pengaturan dan pilih mesin FFmpeg untuk format output yang presisi.'],
@@ -112,50 +124,108 @@ const content = {
 
 export default function GuidePage() {
   const [locale, setLocale] = useState<Locale>('en');
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
   useEffect(() => {
-    const timer = window.setTimeout(() => setLocale(readSettings().locale), 0);
-    return () => window.clearTimeout(timer);
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const syncPreferences = () => {
+      const settings = readSettings();
+      setLocale(settings.locale);
+      setReduceMotion(settings.motion === 'reduced' || (settings.motion === 'system' && media.matches));
+    };
+    const timer = window.setTimeout(syncPreferences, 0);
+    media.addEventListener('change', syncPreferences);
+    return () => {
+      window.clearTimeout(timer);
+      media.removeEventListener('change', syncPreferences);
+    };
+  }, []);
+  useEffect(() => {
+    const standalone = window.matchMedia('(display-mode: standalone)');
+    const updateDisplayMode = () => setIsStandalone(standalone.matches);
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const handleInstalled = () => {
+      setInstallPrompt(null);
+      setIsStandalone(true);
+    };
+    updateDisplayMode();
+    standalone.addEventListener('change', updateDisplayMode);
+    window.addEventListener('beforeinstallprompt', captureInstallPrompt);
+    window.addEventListener('appinstalled', handleInstalled);
+    if ('serviceWorker' in navigator) {
+      void navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' });
+    }
+    return () => {
+      standalone.removeEventListener('change', updateDisplayMode);
+      window.removeEventListener('beforeinstallprompt', captureInstallPrompt);
+      window.removeEventListener('appinstalled', handleInstalled);
+    };
   }, []);
   const copy = content[locale];
+  const enter = reduceMotion ? { initial: false } : {
+    initial: { opacity: 0, y: 14 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: .42, ease: [0.22, 1, 0.36, 1] as const },
+  };
+  const installPwa = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === 'accepted') setInstallPrompt(null);
+  };
+
   return (
     <main className="min-h-screen bg-[#0b1020] text-slate-100">
-      <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b1020]/90 backdrop-blur-xl">
+      {!reduceMotion && <motion.div aria-hidden="true" initial={{ scaleY: 1 }} animate={{ scaleY: 0 }} transition={{ duration: .5, ease: [0.76, 0, 0.24, 1] }} style={{ transformOrigin: 'top' }} className="pointer-events-none fixed inset-0 z-50 bg-gradient-to-b from-[#18213d] to-[#0b1020]" />}
+      <motion.header {...enter} className="sticky top-0 z-20 border-b border-white/10 bg-[#0b1020]/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
-          <Link href="/" className="flex items-center gap-3">
-            <Image src="/logo-mark.svg" alt="OcularMP4" width={38} height={38} className="rounded-xl" />
-            <span className="font-semibold tracking-tight">OcularMP4 <span className="font-normal text-slate-500">/ Wiki</span></span>
-          </Link>
+          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+            <Link href="/" className="flex min-w-0 items-center gap-3">
+              <Image src="/logo-mark.svg" alt="OcularMP4" width={38} height={38} className="shrink-0 rounded-xl" />
+              <span className="hidden truncate font-semibold tracking-tight sm:inline">OcularMP4 <span className="font-normal text-slate-500">/ Wiki</span></span>
+            </Link>
+            <Link href="/" className="whitespace-nowrap rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-1 inline h-3.5 w-3.5" />{copy.back}</Link>
+          </div>
           <div className="flex items-center gap-2">
-            <div className="flex rounded-lg border border-white/10 bg-black/20 p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => setLocale(item)} className={`rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}</div>
-            <Link href="/" className="rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-1 inline h-3.5 w-3.5" />{copy.back}</Link>
+            <div className="flex rounded-lg border border-white/10 bg-black/20 p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} onClick={() => setLocale(item)} className={`relative rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'text-[#0b1020]' : 'text-slate-400'}`}>{locale === item && <motion.span layoutId="wiki-active-language" className="absolute inset-0 rounded-md bg-cyan-300" transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 34 }} />}<span className="relative">{item.toUpperCase()}</span></button>)}</div>
           </div>
         </div>
-      </header>
+      </motion.header>
       <div className="mx-auto grid max-w-7xl gap-10 px-5 py-10 lg:grid-cols-[220px_1fr] lg:px-8">
-        <aside className="lg:sticky lg:top-24 lg:h-fit">
+        <motion.aside {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, x: -16 }, animate: { opacity: 1, x: 0 }, transition: { delay: .08, duration: .42, ease: [0.22, 1, 0.36, 1] } })} className="lg:sticky lg:top-24 lg:h-fit">
           <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-200">{copy.badge}</div>
           <nav className="space-y-1 rounded-2xl border border-white/10 bg-[#111a30] p-3">
             <div className="mb-3 px-3 text-xs font-semibold text-slate-400">{copy.toc}</div>
-            {copy.sections.map(([id, label], index) => <a key={id} href={`#${id}`} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white"><span className="text-xs text-slate-600">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-600" /></a>)}
+            {copy.sections.map(([id, label], index) => <motion.a key={id} href={`#${id}`} whileHover={reduceMotion ? undefined : { x: 3 }} transition={{ duration: .18 }} className="group flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white"><span className="text-xs text-slate-600">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-600 group-hover:translate-x-0.5" /></motion.a>)}
           </nav>
-        </aside>
-        <article className="min-w-0 max-w-4xl">
-          <div className="mb-12 border-b border-white/10 pb-10"><div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100"><BookOpen className="h-3.5 w-3.5" />{copy.badge}</div><h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">{copy.title}</h1><p className="mt-5 max-w-2xl text-base leading-8 text-slate-400">{copy.intro}</p></div>
-          <GuideSection id="overview" title={copy.overviewTitle} icon={BookOpen}><p>{copy.overviewBody}</p></GuideSection>
-          <GuideSection id="workflow" title={copy.workflowTitle} icon={Workflow}><div className="grid gap-3 sm:grid-cols-2">{copy.workflow.map(([number, title, body]) => <div key={number} className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="mb-4 grid h-8 w-8 place-items-center rounded-lg bg-cyan-300/10 text-sm font-bold text-cyan-200">{number}</div><h3 className="mb-2 font-semibold text-white">{title}</h3><p>{body}</p></div>)}</div></GuideSection>
-          <GuideSection id="engines" title={copy.enginesTitle} icon={Cpu}><div className="grid gap-4 sm:grid-cols-2">{copy.engines.map(([title, body]) => <div key={title} className="rounded-2xl border border-white/10 bg-[#111a30] p-5"><h3 className="mb-2 font-semibold text-white">{title}</h3><p>{body}</p></div>)}</div></GuideSection>
-          <GuideSection id="presets" title={copy.presetsTitle} icon={Sparkles}><p>{copy.presetsBody}</p><ol className="mt-5 space-y-3">{copy.aiSteps.map((item, index) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" /><span>{index + 1}. {item}</span></li>)}</ol></GuideSection>
-          <GuideSection id="queue" title={copy.queueTitle} icon={Download}><p>{copy.queueBody}</p><ul className="mt-5 space-y-3">{copy.queueTips.map((item) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" /><span>{item}</span></li>)}</ul></GuideSection>
-          <GuideSection id="privacy" title={copy.privacyTitle} icon={LockKeyhole}><p>{copy.privacyBody}</p></GuideSection>
-          <GuideSection id="install" title={copy.installTitle} icon={Download}><p>{copy.installBody}</p></GuideSection>
-          <GuideSection id="troubleshooting" title={copy.troubleshootingTitle} icon={Settings2}><div className="space-y-3">{copy.troubleshooting.map(([title, body]) => <details key={title} className="group rounded-2xl border border-white/10 bg-[#111a30] p-4"><summary className="cursor-pointer list-none font-medium text-white">{title}<ChevronRight className="float-right h-4 w-4 text-slate-500 transition group-open:rotate-90" /></summary><p className="pt-3">{body}</p></details>)}</div></GuideSection>
-          <div className="mt-14 flex flex-col items-start justify-between gap-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-6 sm:flex-row sm:items-center"><div><p className="text-sm text-slate-300">{copy.footer}</p></div><Link href="/" className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><Play className="mr-2 inline h-4 w-4" />{copy.openStudio}</Link></div>
-        </article>
+        </motion.aside>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.article key={locale} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -8 }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })} className="min-w-0 max-w-4xl">
+            <motion.div {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 16 }, animate: { opacity: 1, y: 0 }, transition: { delay: .12, duration: .46, ease: [0.22, 1, 0.36, 1] } })} className="mb-12 border-b border-white/10 pb-10"><div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100"><BookOpen className="h-3.5 w-3.5" />{copy.badge}</div><h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">{copy.title}</h1><p className="mt-5 max-w-2xl text-base leading-8 text-slate-400">{copy.intro}</p></motion.div>
+            <GuideSection reduceMotion={reduceMotion} id="overview" title={copy.overviewTitle} icon={BookOpen}><p>{copy.overviewBody}</p></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="workflow" title={copy.workflowTitle} icon={Workflow}><div className="grid gap-3 sm:grid-cols-2">{copy.workflow.map(([number, title, body], index) => <RevealCard key={number} index={index} reduceMotion={reduceMotion}><div className="mb-4 grid h-8 w-8 place-items-center rounded-lg bg-cyan-300/10 text-sm font-bold text-cyan-200">{number}</div><h3 className="mb-2 font-semibold text-white">{title}</h3><p>{body}</p></RevealCard>)}</div></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="engines" title={copy.enginesTitle} icon={Cpu}><div className="grid gap-4 sm:grid-cols-2">{copy.engines.map(([title, body], index) => <RevealCard key={title} index={index} reduceMotion={reduceMotion}><h3 className="mb-2 font-semibold text-white">{title}</h3><p>{body}</p></RevealCard>)}</div></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="presets" title={copy.presetsTitle} icon={Sparkles}><p>{copy.presetsBody}</p><ol className="mt-5 space-y-3">{copy.aiSteps.map((item, index) => <motion.li initial={reduceMotion ? false : { opacity: 0, x: -8 }} whileInView={reduceMotion ? undefined : { opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: index * .05 }} key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" /><span>{index + 1}. {item}</span></motion.li>)}</ol></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="queue" title={copy.queueTitle} icon={Download}><p>{copy.queueBody}</p><ul className="mt-5 space-y-3">{copy.queueTips.map((item, index) => <motion.li initial={reduceMotion ? false : { opacity: 0, x: -8 }} whileInView={reduceMotion ? undefined : { opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ delay: index * .05 }} key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" /><span>{item}</span></motion.li>)}</ul></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="privacy" title={copy.privacyTitle} icon={LockKeyhole}><p>{copy.privacyBody}</p></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="pwa" title={copy.installTitle} icon={Download}><p>{copy.installBody}</p><button onClick={installPwa} disabled={!installPrompt || isStandalone} className={`mt-5 inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold leading-none disabled:cursor-default ${installPrompt && !isStandalone ? 'bg-cyan-300 text-[#0b1020]' : 'border border-white/10 bg-white/5 text-slate-400 shadow-none'}`}><Download className="h-4 w-4" />{isStandalone ? copy.pwaInstalled : installPrompt ? copy.installPwa : copy.pwaUnavailable}</button></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="troubleshooting" title={copy.troubleshootingTitle} icon={Settings2}><div className="space-y-3">{copy.troubleshooting.map(([title, body], index) => <motion.details initial={reduceMotion ? false : { opacity: 0, y: 8 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: index * .04 }} key={title} className="group rounded-2xl border border-white/10 bg-[#111a30] p-4"><summary className="cursor-pointer list-none font-medium text-white">{title}<ChevronRight className="float-right h-4 w-4 text-slate-500 transition group-open:rotate-90" /></summary><p className="pt-3">{body}</p></motion.details>)}</div></GuideSection>
+            <motion.div initial={reduceMotion ? false : { opacity: 0, y: 12 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: .4 }} className="mt-14 flex flex-col items-start justify-between gap-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-6 sm:flex-row sm:items-center"><div><p className="text-sm text-slate-300">{copy.footer}</p></div><Link href="/" className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><Play className="mr-2 inline h-4 w-4" />{copy.openStudio}</Link></motion.div>
+          </motion.article>
+        </AnimatePresence>
       </div>
     </main>
   );
 }
 
-function GuideSection({ id, title, icon: Icon, children }: { id: string; title: string; icon: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
-  return <section id={id} className="scroll-mt-28 border-b border-white/10 py-10 first:pt-0"><div className="mb-5 flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200"><Icon className="h-4 w-4" /></div><h2 className="text-2xl font-semibold tracking-tight text-white">{title}</h2></div><div className="space-y-4 text-sm leading-7 text-slate-400">{children}</div></section>;
+function GuideSection({ id, title, icon: Icon, children, reduceMotion }: { id: string; title: string; icon: React.ComponentType<{ className?: string }>; children: React.ReactNode; reduceMotion: boolean }) {
+  return <motion.section initial={reduceMotion ? false : { opacity: 0, y: 18 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0 }} viewport={{ once: true, amount: .15 }} transition={{ duration: .42, ease: [0.22, 1, 0.36, 1] }} id={id} className="scroll-mt-28 border-b border-white/10 py-10 first:pt-0"><div className="mb-5 flex items-center gap-3"><motion.div whileInView={reduceMotion ? undefined : { rotate: [0, -5, 0], scale: [1, 1.08, 1] }} viewport={{ once: true }} className="grid h-9 w-9 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200"><Icon className="h-4 w-4" /></motion.div><h2 className="text-2xl font-semibold tracking-tight text-white">{title}</h2></div><div className="space-y-4 text-sm leading-7 text-slate-400">{children}</div></motion.section>;
+}
+
+function RevealCard({ children, index, reduceMotion }: { children: React.ReactNode; index: number; reduceMotion: boolean }) {
+  return <motion.div initial={reduceMotion ? false : { opacity: 0, y: 12, scale: .98 }} whileInView={reduceMotion ? undefined : { opacity: 1, y: 0, scale: 1 }} whileHover={reduceMotion ? undefined : { y: -3 }} viewport={{ once: true, amount: .3 }} transition={{ delay: index * .05, duration: .34, ease: [0.22, 1, 0.36, 1] }} className="rounded-2xl border border-white/10 bg-[#111a30] p-5">{children}</motion.div>;
 }
