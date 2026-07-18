@@ -5,34 +5,17 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle, ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronDown,
   CircleHelp, Clock3, Cpu, Download, FileVideo, FolderOpen, Layers3, Menu,
-  Search, Settings2, ShieldCheck, Sparkles, Trash2, Upload, Volume2, VolumeX,
+  Heart, History, Search, Settings2, ShieldCheck, Sparkles, Trash2, Upload, Volume2, VolumeX,
   Wand2, X
 } from 'lucide-react';
 import { translations, type Locale, type TranslationKey } from '../lib/i18n';
 import { generateDirectPreset, getAIProvider } from '../lib/ai-providers';
 import { DEFAULT_SETTINGS, readAICredential, readSettings, writeSettings, type AppSettings } from '../lib/settings';
+import {
+  AI_HISTORY_STORAGE_KEY, PRESETS_STORAGE_KEY, parseImportedPresets, readAIHistory, readStoredPresets,
+  writeAIHistory, writeStoredPresets, type AIHistoryItem, type Preset, type PresetSettings,
+} from '../lib/preset-workspace';
 import { SettingsPanel } from '../components/settings-panel';
-
-interface PresetSettings {
-  format: 'mp4' | 'webm' | 'gif' | 'mp3' | 'aac' | 'mkv';
-  vcodec: 'h264' | 'vp9' | 'hevc' | 'gif' | 'none';
-  acodec: 'aac' | 'opus' | 'mp3' | 'none';
-  resolution: '1080p' | '720p' | '480p' | '360p' | 'original';
-  fps: number;
-  vbitrate: string;
-  abitrate: string;
-  audioEnabled: boolean;
-  volume: number;
-}
-
-interface Preset {
-  id: string;
-  name: string;
-  description: string;
-  category: 'compatible' | 'size' | 'hq' | 'audio' | 'gif' | 'custom';
-  ffmpegArgs: string[];
-  settings: PresetSettings;
-}
 
 const DEFAULT_PRESETS: Preset[] = [
   {
@@ -96,6 +79,12 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
+let idCounter = 0;
+function uniqueId(prefix: string) {
+  idCounter += 1;
+  return `${prefix}-${idCounter}`;
+}
+
 export default function PresetStudio() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [locale, setLocale] = useState<Locale>('en');
@@ -109,6 +98,8 @@ export default function PresetStudio() {
   const [trimEnd, setTrimEnd] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [presets, setPresets] = useState<Preset[]>(DEFAULT_PRESETS);
+  const [aiHistory, setAiHistory] = useState<AIHistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const [activePreset, setActivePreset] = useState<Preset>(DEFAULT_PRESETS[0]);
   const [category, setCategory] = useState<(typeof categories)[number]>('all');
   const [query, setQuery] = useState('');
@@ -131,6 +122,7 @@ export default function PresetStudio() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const presetImportRef = useRef<HTMLInputElement>(null);
 
   const t = (key: TranslationKey) => translations[locale][key];
   const reduceMotion = settings.motion === 'reduced' || (settings.motion === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -152,8 +144,8 @@ export default function PresetStudio() {
       setLocale(stored.locale);
       setEngine(stored.defaultEngine);
       try {
-        const parsed = JSON.parse(localStorage.getItem('ocularmp4.presets.v1') || 'null');
-        if (Array.isArray(parsed)) setPresets([...DEFAULT_PRESETS, ...parsed]);
+        setPresets(readStoredPresets(DEFAULT_PRESETS));
+        setAiHistory(readAIHistory());
       } catch { /* preserve defaults when storage is invalid */ }
       setSettingsReady(true);
     }, 0);
@@ -180,8 +172,53 @@ export default function PresetStudio() {
   const filteredPresets = useMemo(() => presets.filter((preset) => {
     const matchesCategory = category === 'all' || preset.category === category;
     const needle = query.toLowerCase().trim();
-    return matchesCategory && (!needle || `${preset.name} ${preset.description} ${preset.category}`.toLowerCase().includes(needle));
+    return matchesCategory && (!needle || `${preset.name} ${preset.description} ${preset.category} ${(preset.tags || []).join(' ')}`.toLowerCase().includes(needle));
   }), [category, presets, query]);
+
+  const persistPresets = (next: Preset[]) => {
+    setPresets(next);
+    writeStoredPresets(next, DEFAULT_PRESETS);
+  };
+
+  const toggleFavorite = (preset: Preset) => {
+    persistPresets(presets.map((item) => item.id === preset.id ? { ...item, favorite: !item.favorite } : item));
+  };
+
+  const deletePreset = (preset: Preset) => {
+    if (DEFAULT_PRESETS.some((base) => base.id === preset.id)) return;
+    persistPresets(presets.filter((item) => item.id !== preset.id));
+    if (activePreset.id === preset.id) selectPreset(DEFAULT_PRESETS[0]);
+    setToast(t('presetDeleted'));
+  };
+
+  const duplicatePreset = (preset: Preset) => {
+    const copy: Preset = { ...preset, id: uniqueId('copy'), name: `${preset.name} · Copy`, source: 'custom', favorite: false };
+    persistPresets([...presets, copy]);
+    selectPreset(copy);
+    setToast(t('presetDuplicated'));
+  };
+
+  const exportPresets = () => {
+    const payload = { schemaVersion: 2, exportedAt: new Date().toISOString(), presets: presets.filter((item) => !DEFAULT_PRESETS.some((base) => base.id === item.id)) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ocularmp4-presets-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast(t('presetsExported'));
+  };
+
+  const importPresets = async (file?: File) => {
+    if (!file) return;
+    try {
+      const imported = parseImportedPresets(await file.text());
+      persistPresets([...presets, ...imported]);
+      setToast(t('presetsImported'));
+    } catch (error: any) {
+      setToast(error?.message || t('importFailed'));
+    }
+  };
 
   const selectPreset = (preset: Preset) => {
     setActivePreset(preset);
@@ -293,10 +330,13 @@ export default function PresetStudio() {
         if (!response.ok) throw new Error(data.error || 'Preset generation failed.');
         presetData = data.preset;
       }
-      const generated: Preset = { ...presetData, id: `ai-${Date.now()}`, category: 'custom' };
+      const generated: Preset = { ...presetData, id: uniqueId('ai'), category: 'custom', source: 'ai', tags: ['ai'] };
       const next = [...presets, generated];
-      setPresets(next);
-      localStorage.setItem('ocularmp4.presets.v1', JSON.stringify(next.filter((item) => !DEFAULT_PRESETS.some((base) => base.id === item.id))));
+      persistPresets(next);
+      const historyItem: AIHistoryItem = { id: uniqueId('history'), prompt: aiPrompt, provider: provider.name, model: settings.aiModel, createdAt: new Date().toISOString(), preset: { ...generated } };
+      const nextHistory = [historyItem, ...aiHistory].slice(0, 30);
+      setAiHistory(nextHistory);
+      writeAIHistory(nextHistory);
       selectPreset(generated);
       setAiPrompt('');
       setToast(t('presetSaved'));
@@ -311,16 +351,16 @@ export default function PresetStudio() {
 
   const saveCustomPreset = () => {
     const custom: Preset = {
-      id: `custom-${Date.now()}`,
+      id: uniqueId('custom'),
       name: `${activePreset.name} · Custom`,
       description: `Custom ${customFormat.toUpperCase()} configuration.`,
       category: 'custom',
       ffmpegArgs: customArgs.split(/\s+/).filter(Boolean),
       settings: { ...activePreset.settings, format: customFormat, vcodec: customVcodec, acodec: customAcodec, resolution: customResolution, fps: customFps, vbitrate: customVbitrate, audioEnabled: customAudioEnabled },
+      source: 'custom',
     };
     const customOnly = [...presets.filter((item) => !DEFAULT_PRESETS.some((base) => base.id === item.id)), custom];
-    setPresets([...DEFAULT_PRESETS, ...customOnly]);
-    localStorage.setItem('ocularmp4.presets.v1', JSON.stringify(customOnly));
+    persistPresets([...DEFAULT_PRESETS, ...customOnly]);
     selectPreset(custom);
     setToast(t('presetSaved'));
   };
@@ -448,9 +488,10 @@ export default function PresetStudio() {
                 </section>}
 
                 {step === 1 && <section className="space-y-5">
-                  <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPresets')} className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-cyan-300/60" /></div><div className="flex gap-1 overflow-x-auto">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${category === item ? 'bg-cyan-300 text-[#0b1020]' : 'bg-white/5 text-slate-400 hover:text-white'}`}>{t(categoryKey[item])}</button>)}</div></div></div>
-                  <div className="grid gap-3 md:grid-cols-2">{filteredPresets.map((preset) => <button key={preset.id} onClick={() => selectPreset(preset)} className={`rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${activePreset.id === preset.id ? 'border-cyan-300/70 bg-cyan-300/10' : 'border-white/10 bg-[#111a30] hover:border-white/25'}`}><div className="mb-2 flex items-start justify-between gap-3"><span className="font-medium text-white">{preset.name}</span>{activePreset.id === preset.id && <Check className="h-4 w-4 shrink-0 text-cyan-200" />}</div><p className="mb-4 text-xs leading-relaxed text-slate-400">{preset.description}</p><div className="flex items-center gap-2 text-[11px] text-slate-500"><span className="rounded-md bg-black/20 px-2 py-1 uppercase text-cyan-100">{preset.settings.format}</span><span>{preset.settings.resolution} · {preset.settings.fps} FPS</span></div></button>)}</div>
+                  <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPresets')} className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-cyan-300/60" /></div><div className="flex gap-1 overflow-x-auto">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${category === item ? 'bg-cyan-300 text-[#0b1020]' : 'bg-white/5 text-slate-400 hover:text-white'}`}>{t(categoryKey[item])}</button>)}</div></div><div className="mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3"><button onClick={exportPresets} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Download className="mr-1 inline h-3.5 w-3.5" />{t('exportPresets')}</button><button onClick={() => presetImportRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('importPresets')}</button><input ref={presetImportRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { importPresets(event.target.files?.[0]); event.currentTarget.value = ''; }} /><button onClick={() => setShowHistory((value) => !value)} className={`rounded-lg border px-3 py-2 text-xs ${showHistory ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 text-slate-300 hover:bg-white/5'}`}><History className="mr-1 inline h-3.5 w-3.5" />{t('aiHistory')} ({aiHistory.length})</button></div></div>
+                  <div className="grid gap-3 md:grid-cols-2">{filteredPresets.map((preset) => <div key={preset.id} onClick={() => selectPreset(preset)} onKeyDown={(event) => event.key === 'Enter' && selectPreset(preset)} role="button" tabIndex={0} className={`cursor-pointer rounded-2xl border p-4 text-left transition hover:-translate-y-0.5 ${activePreset.id === preset.id ? 'border-cyan-300/70 bg-cyan-300/10' : 'border-white/10 bg-[#111a30] hover:border-white/25'}`}><div className="mb-2 flex items-start justify-between gap-3"><span className="font-medium text-white">{preset.name}</span><div className="flex items-center gap-1"><button aria-label={t('favorite')} onClick={(event) => { event.stopPropagation(); toggleFavorite(preset); }} className={`rounded-md p-1 ${preset.favorite ? 'text-rose-300' : 'text-slate-600 hover:text-rose-300'}`}><Heart className="h-4 w-4" fill={preset.favorite ? 'currentColor' : 'none'} /></button>{activePreset.id === preset.id && <Check className="h-4 w-4 shrink-0 text-cyan-200" />}</div></div><p className="mb-4 text-xs leading-relaxed text-slate-400">{preset.description}</p><div className="flex items-center justify-between gap-2 text-[11px] text-slate-500"><div className="flex items-center gap-2"><span className="rounded-md bg-black/20 px-2 py-1 uppercase text-cyan-100">{preset.settings.format}</span><span>{preset.settings.resolution} · {preset.settings.fps} FPS</span></div>{!DEFAULT_PRESETS.some((base) => base.id === preset.id) && <div className="flex gap-1"><button aria-label={t('duplicatePreset')} onClick={(event) => { event.stopPropagation(); duplicatePreset(preset); }} className="rounded-md px-2 py-1 text-slate-400 hover:bg-white/10 hover:text-white">⧉</button><button aria-label={t('deletePreset')} onClick={(event) => { event.stopPropagation(); deletePreset(preset); }} className="rounded-md px-2 py-1 text-slate-400 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button></div>}</div></div>)}</div>
                   {!filteredPresets.length && <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-slate-500">{t('noResults')}<br />{t('tryAnother')}</div>}
+                  {showHistory && <div className="rounded-2xl border border-indigo-300/20 bg-indigo-300/5 p-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{t('aiHistory')}</h3><button onClick={() => { setAiHistory([]); writeAIHistory([]); localStorage.removeItem(AI_HISTORY_STORAGE_KEY); }} className="text-xs text-slate-400 hover:text-rose-200">{t('clearHistory')}</button></div>{aiHistory.length ? <div className="space-y-2">{aiHistory.slice(0, 6).map((item) => <button key={item.id} onClick={() => { const restored: Preset = { ...item.preset, id: `history-${item.id}`, source: 'ai', tags: ['ai', 'history'] }; persistPresets([...presets, restored]); selectPreset(restored); setToast(t('historyRestored')); }} className="w-full rounded-xl border border-white/10 bg-black/15 p-3 text-left hover:border-indigo-300/40"><div className="flex items-center justify-between gap-2 text-xs text-white"><span className="truncate">{item.prompt}</span><span className="shrink-0 text-slate-500">{new Date(item.createdAt).toLocaleDateString(locale)}</span></div><div className="mt-1 text-[11px] text-slate-500">{item.provider} · {item.model}</div></button>)}</div> : <p className="text-xs text-slate-500">{t('historyEmpty')}</p>}</div>}
                   <div className="rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 to-cyan-300/5 p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Sparkles className="h-4 w-4 text-indigo-200" />{t('aiTitle')}</div><button onClick={() => setPanel('settings')} className="rounded-lg border border-indigo-300/20 px-2.5 py-1 text-[11px] text-indigo-100 hover:bg-indigo-300/10">{t('aiPoweredBy')} {getAIProvider(settings.aiProvider).name} · {settings.aiModel}</button></div><div className="flex flex-col gap-2 sm:flex-row"><input value={aiPrompt} onChange={(event) => setAiPrompt(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && generatePreset()} placeholder={t('aiHint')} className="flex-1 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm text-white outline-none focus:border-indigo-300/70" /><button disabled={aiGenerating || !aiPrompt.trim()} onClick={generatePreset} className="rounded-xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{aiGenerating ? t('generating') : t('generate')}<Wand2 className="ml-2 inline h-4 w-4" /></button></div>{aiError && <p className="mt-3 text-xs text-rose-300"><AlertCircle className="mr-1 inline h-4 w-4" />{aiError}</p>}</div>
                   <div className="flex justify-between"><button onClick={() => setStep(0)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button onClick={() => setStep(2)} className="rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
                 </section>}
@@ -474,7 +515,7 @@ export default function PresetStudio() {
       </div>
 
       <AnimatePresence>
-        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } })} /><motion.aside className="fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { type: 'spring', damping: 28, stiffness: 260 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
+        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } })} /><motion.aside className="fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { type: 'spring', damping: 28, stiffness: 260 } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button onClick={() => setPanel(null)} className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
       <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-cyan-300/30 bg-[#14213d] px-4 py-3 text-sm text-cyan-100 shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 12 } })}>{toast}</motion.div>}</AnimatePresence>
     </main>

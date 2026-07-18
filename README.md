@@ -1,9 +1,9 @@
 # Encode.Core
 
 Encode.Core is a private, browser-native video and audio converter. Files can be
-trimmed and transcoded locally with native browser APIs or FFmpeg.wasm, with
-custom presets stored on the device. The interface is available in English and
-Bahasa Indonesia.
+trimmed and transcoded locally with native browser APIs or FFmpeg.wasm, with a
+versioned preset workspace stored on the device. The interface is available in
+English and Bahasa Indonesia.
 
 ## Requirements
 
@@ -47,3 +47,13 @@ Cloud API keys are submitted only with the current request and are never stored
 by the server. Keys remain in session storage by default; users can explicitly
 choose to remember a key on their device. Ollama and custom local endpoints are
 called directly from the browser.
+
+## Preset workspace
+
+The Preset step includes saved custom and AI-generated presets, favorites,
+duplicate/delete actions, search and category filters, plus JSON import/export.
+AI generation history is stored locally and can restore an earlier result
+without sending the prompt again.
+
+Preset exports use a versioned JSON envelope so future releases can migrate
+older files safely. Exported files never contain API keys.
