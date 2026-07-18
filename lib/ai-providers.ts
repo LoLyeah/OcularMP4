@@ -51,10 +51,10 @@ export const PRESET_JSON_SCHEMA = {
       additionalProperties: false,
       required: ['format', 'vcodec', 'acodec', 'resolution', 'fps', 'vbitrate', 'abitrate', 'audioEnabled', 'volume'],
       properties: {
-        format: { type: 'string', enum: ['mp4', 'webm', 'gif', 'mp3', 'aac', 'mkv'] },
-        vcodec: { type: 'string', enum: ['h264', 'vp9', 'hevc', 'av1', 'gif', 'none'] },
-        acodec: { type: 'string', enum: ['aac', 'opus', 'mp3', 'none'] },
-        resolution: { type: 'string', enum: ['1080p', '720p', '480p', '360p', 'original'] },
+        format: { type: 'string', enum: OUTPUT_FORMATS },
+        vcodec: { type: 'string', enum: VIDEO_CODECS },
+        acodec: { type: 'string', enum: AUDIO_CODECS },
+        resolution: { type: 'string', enum: RESOLUTIONS },
         fps: { type: 'integer' },
         vbitrate: { type: 'string' },
         abitrate: { type: 'string' },
@@ -84,10 +84,6 @@ Stop after producing the complete JSON object.`;
 }
 
 export function validatePresetData(value: any) {
-  const formats = ['mp4', 'webm', 'gif', 'mp3', 'aac', 'mkv'];
-  const videoCodecs = ['h264', 'vp9', 'hevc', 'av1', 'gif', 'none'];
-  const audioCodecs = ['aac', 'opus', 'mp3', 'none'];
-  const resolutions = ['1080p', '720p', '480p', '360p', 'original'];
   const categories = ['compatible', 'size', 'hq', 'audio', 'gif', 'custom'];
   if (!value || typeof value !== 'object') throw new Error('Preset response is not an object.');
   if (typeof value.name !== 'string' || typeof value.description !== 'string') throw new Error('Preset name or description is missing.');
@@ -95,7 +91,7 @@ export function validatePresetData(value: any) {
   if (!Array.isArray(value.ffmpegArgs) || !value.ffmpegArgs.every((item: unknown) => typeof item === 'string')) throw new Error('FFmpeg arguments are invalid.');
   if (value.ffmpegArgs.some((item: string) => item === '-i' || /^(https?|file|pipe|concat):/i.test(item))) throw new Error('Preset contains an unsafe input argument.');
   const settings = value.settings;
-  if (!settings || !formats.includes(settings.format) || !videoCodecs.includes(settings.vcodec) || !audioCodecs.includes(settings.acodec) || !resolutions.includes(settings.resolution)) throw new Error('Preset settings contain unsupported values.');
+  if (!settings || !OUTPUT_FORMATS.includes(settings.format) || !VIDEO_CODECS.includes(settings.vcodec) || !AUDIO_CODECS.includes(settings.acodec) || !RESOLUTIONS.includes(settings.resolution)) throw new Error('Preset settings contain unsupported values.');
   if (!Number.isInteger(settings.fps) || settings.fps < 1 || settings.fps > 120) throw new Error('Preset frame rate is invalid.');
   if (typeof settings.audioEnabled !== 'boolean' || typeof settings.volume !== 'number' || settings.volume < 0 || settings.volume > 4) throw new Error('Preset audio settings are invalid.');
   return value;
@@ -174,3 +170,4 @@ export async function testDirectProvider(args: {
   if (!response.ok) throw new Error(`Connection returned ${response.status}.`);
   return true;
 }
+import { AUDIO_CODECS, OUTPUT_FORMATS, RESOLUTIONS, VIDEO_CODECS } from './media-capabilities.ts';

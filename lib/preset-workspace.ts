@@ -1,10 +1,11 @@
 import { validatePresetData } from './ai-providers';
+import type { AudioCodec, OutputFormat, Resolution, VideoCodec } from './media-capabilities.ts';
 
 export interface PresetSettings {
-  format: 'mp4' | 'webm' | 'gif' | 'mp3' | 'aac' | 'mkv';
-  vcodec: 'h264' | 'vp9' | 'hevc' | 'av1' | 'gif' | 'none';
-  acodec: 'aac' | 'opus' | 'mp3' | 'none';
-  resolution: '1080p' | '720p' | '480p' | '360p' | 'original';
+  format: OutputFormat;
+  vcodec: VideoCodec;
+  acodec: AudioCodec;
+  resolution: Resolution;
   fps: number;
   vbitrate: string;
   abitrate: string;

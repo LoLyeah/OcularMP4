@@ -76,7 +76,8 @@ button:disabled {
   box-shadow: 0 10px 24px rgb(66 216 233 / .18);
 }
 
-[class~="bg-cyan-300"]:hover {
+button[class~="bg-cyan-300"]:hover,
+a[class~="bg-cyan-300"]:hover {
   box-shadow: 0 14px 30px rgb(66 216 233 / .28);
   transform: translateY(-1px);
 }
@@ -162,26 +163,6 @@ input:not([type="range"]):focus, select:focus, textarea:focus {
 * {
   scrollbar-width: thin;
   scrollbar-color: rgb(139 124 255 / .45) transparent;
-}
-
-@keyframes ambient-pulse {
-  0%, 100% { opacity: .72; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.03); }
-}
-
-@keyframes progress-shimmer {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
-}
-
-.ambient-glow {
-  animation: ambient-pulse 7s ease-in-out infinite;
-}
-
-.progress-shimmer {
-  background-size: 200% 100%;
-  box-shadow: 0 0 16px rgb(94 231 245 / .28);
-  animation: progress-shimmer 1.8s linear infinite;
 }
 
 .smooth-details > summary svg {
@@ -553,10 +534,6 @@ body {
 
   .dropzone {
     min-height: 19rem;
-  }
-
-  .ambient-glow {
-    animation: none;
   }
 
   .preset-filters {
