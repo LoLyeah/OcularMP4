@@ -857,48 +857,65 @@ export default function PresetStudio() {
         if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, status: 'completed', progress: 100, outputUrl: resultUrl, outputName: outputFileName, outputSize: formatBytes(blob.size) } : item));
         recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: jobPreset.name, preset: jobPreset });
       } else {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        if (!video || !canvas) throw new Error('Preview canvas unavailable.');
-        const width = jobSettings.resolution === '1080p' ? 1920 : jobSettings.resolution === '720p' ? 1280 : jobSettings.resolution === '480p' ? 854 : jobSettings.resolution === '360p' ? 640 : video.videoWidth;
-        const height = jobSettings.resolution === '1080p' ? 1080 : jobSettings.resolution === '720p' ? 720 : jobSettings.resolution === '480p' ? 480 : jobSettings.resolution === '360p' ? 360 : video.videoHeight;
-        canvas.width = width || 1280;
-        canvas.height = height || 720;
-        const stream = canvas.captureStream(jobSettings.fps);
-        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: getBitrateValue(jobSettings.vbitrate) });
-        const chunks: Blob[] = [];
-        recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
-        const finished = new Promise<void>((resolve) => {
-          recorder.onstop = () => {
-            setConversionStage('finalizing');
-            const blob = new Blob(chunks, { type: 'video/webm' });
-            const resultUrl = URL.createObjectURL(blob);
-            setOutputUrl(resultUrl);
-            const outputFileName = `converted_${workingFile.name.replace(/\.[^/.]+$/, '')}.webm`;
-            setOutputName(outputFileName);
-            setOutputSize(formatBytes(blob.size));
-            if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, status: 'completed', progress: 100, outputUrl: resultUrl, outputName: outputFileName, outputSize: formatBytes(blob.size) } : item));
-            recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: jobPreset.name, preset: jobPreset });
-            resolve();
+        const { transcodeWithWebCodecs, isWebCodecsSupported } = await import('../lib/webcodecs-engine');
+        let blob: Blob;
+        if (isWebCodecsSupported()) {
+          setConversionStage('encoding');
+          blob = await transcodeWithWebCodecs({
+            file: workingFile,
+            format: jobSettings.format,
+            vcodec: jobSettings.vcodec,
+            acodec: jobSettings.acodec,
+            fps: jobSettings.fps,
+            targetMB: customTargetMB,
+            onProgress: (pct) => {
+              setProgress(pct);
+              if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, progress: pct } : item));
+            },
+          });
+        } else {
+          const video = videoRef.current;
+          const canvas = canvasRef.current;
+          if (!video || !canvas) throw new Error('Preview canvas unavailable.');
+          const width = jobSettings.resolution === '1080p' ? 1920 : jobSettings.resolution === '720p' ? 1280 : jobSettings.resolution === '480p' ? 854 : jobSettings.resolution === '360p' ? 360 : video.videoWidth;
+          const height = jobSettings.resolution === '1080p' ? 1080 : jobSettings.resolution === '720p' ? 720 : jobSettings.resolution === '480p' ? 480 : jobSettings.resolution === '360p' ? 360 : video.videoHeight;
+          canvas.width = width || 1280;
+          canvas.height = height || 720;
+          const stream = canvas.captureStream(jobSettings.fps);
+          const recorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9', videoBitsPerSecond: getBitrateValue(jobSettings.vbitrate) });
+          const chunks: Blob[] = [];
+          recorder.ondataavailable = (event) => event.data.size && chunks.push(event.data);
+          const finished = new Promise<void>((resolve) => {
+            recorder.onstop = () => resolve();
+          });
+          video.currentTime = jobTrimStart;
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+          setConversionStage('encoding');
+          recorder.start();
+          await video.play();
+          const draw = () => {
+            if (video.currentTime < jobTrimEnd) {
+              canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
+              setProgress(Math.min(99, Math.round(((video.currentTime - jobTrimStart) / Math.max(0.1, jobTrimEnd - jobTrimStart)) * 100)));
+              requestAnimationFrame(draw);
+            } else {
+              video.pause();
+              recorder.stop();
+            }
           };
-        });
-        video.currentTime = jobTrimStart;
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
-        setConversionStage('encoding');
-        recorder.start();
-        await video.play();
-        const draw = () => {
-          if (video.currentTime < jobTrimEnd) {
-            canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height);
-            setProgress(Math.min(99, Math.round(((video.currentTime - jobTrimStart) / Math.max(0.1, jobTrimEnd - jobTrimStart)) * 100)));
-            requestAnimationFrame(draw);
-          } else {
-            video.pause();
-            recorder.stop();
-          }
-        };
-        requestAnimationFrame(draw);
-        await finished;
+          requestAnimationFrame(draw);
+          await finished;
+          blob = new Blob(chunks, { type: 'video/webm' });
+        }
+        setConversionStage('finalizing');
+        const resultUrl = URL.createObjectURL(blob);
+        setOutputUrl(resultUrl);
+        const names = createTempNames(workingFile.name, jobSettings.format, jobId || uniqueId('single'));
+        const outputFileName = names.downloadName;
+        setOutputName(outputFileName);
+        setOutputSize(formatBytes(blob.size));
+        if (jobId) setQueue((current) => current.map((item) => item.id === jobId ? { ...item, status: 'completed', progress: 100, outputUrl: resultUrl, outputName: outputFileName, outputSize: formatBytes(blob.size) } : item));
+        recordConversion({ fileName: workingFile.name, outputName: outputFileName, outputSize: formatBytes(blob.size), status: 'completed', engine, presetName: jobPreset.name, preset: jobPreset });
       }
       setProgress(100);
       setElapsed(Number(((Date.now() - started) / 1000).toFixed(1)));
