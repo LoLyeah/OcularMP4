@@ -128,6 +128,7 @@ interface QueueJob {
   outputName?: string;
   outputSize?: string;
   error?: string;
+  presetOverridden?: boolean;
 }
 function getMimeType(format: string) {
   return ({ mp4: 'video/mp4', webm: 'video/webm', gif: 'image/gif', mp3: 'audio/mpeg', aac: 'audio/aac', mkv: 'video/x-matroska' } as Record<string, string>)[format] || 'application/octet-stream';
@@ -179,6 +180,7 @@ export default function PresetStudio() {
   const conversionHistoryRef = useRef<ConversionHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [activePreset, setActivePreset] = useState<Preset>(DEFAULT_PRESETS[0]);
+  const [batchPreset, setBatchPreset] = useState<Preset>(DEFAULT_PRESETS[0]);
   const [category, setCategory] = useState<(typeof categories)[number]>('all');
   const [query, setQuery] = useState('');
   const [showAllPresets, setShowAllPresets] = useState(false);
@@ -293,9 +295,9 @@ export default function PresetStudio() {
   ].join(' · ');
 
   useEffect(() => {
-    if (!selectedJobId) return;
+    if (!selectedJobId || step === 1) return;
     setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, preset: configuredPreset } : job));
-  }, [configuredPreset, selectedJobId]);
+  }, [configuredPreset, selectedJobId, step]);
 
   useEffect(() => {
     if (!panel) return;
@@ -539,6 +541,12 @@ export default function PresetStudio() {
     setCustomArgs(preset.ffmpegArgs.join(' '));
   };
 
+  const selectBatchPreset = (preset: Preset) => {
+    setBatchPreset(preset);
+    selectPreset(preset);
+    setQueue((current) => current.map((job) => job.presetOverridden ? job : { ...job, preset }));
+  };
+
   const log = (message: string) => setLogs((items) => [...items.slice(-80), `[${new Date().toLocaleTimeString()}] ${message}`]);
 
   const recordConversion = (item: Omit<ConversionHistoryItem, 'id' | 'createdAt'>) => {
@@ -577,7 +585,7 @@ export default function PresetStudio() {
     const jobs: QueueJob[] = incoming.map((file) => ({
       id: uniqueId('job'),
       file,
-      preset: configuredPreset,
+      preset: batchPreset,
       duration: 0,
       trimStart: 0,
       trimEnd: 0,
@@ -615,6 +623,12 @@ export default function PresetStudio() {
       return;
     }
     setStep((current) => Math.min(3, current + 1));
+  };
+
+  const continueToAdjust = () => {
+    const selectedJob = queue.find((job) => job.id === selectedJobId);
+    selectPreset(selectedJob?.preset || batchPreset);
+    setStep(2);
   };
 
   const loadFFmpeg = async () => {
@@ -687,7 +701,7 @@ export default function PresetStudio() {
       const nextHistory = [historyItem, ...aiHistory].slice(0, 30);
       setAiHistory(nextHistory);
       writeAIHistory(nextHistory);
-      selectPreset(generated);
+      selectBatchPreset(generated);
       setAiPrompt('');
       setToast(t('presetSaved'));
       log(`AI preset created with ${provider.name}.`);
@@ -902,8 +916,13 @@ export default function PresetStudio() {
   const updateJobPreset = (job: QueueJob, presetId: string) => {
     const preset = presets.find((item) => item.id === presetId);
     if (!preset) return;
-    setQueue((current) => current.map((item) => item.id === job.id ? { ...item, preset } : item));
+    setQueue((current) => current.map((item) => item.id === job.id ? { ...item, preset, presetOverridden: true } : item));
     if (selectedJobId === job.id) selectPreset(preset);
+  };
+
+  const clearJobPresetOverride = (job: QueueJob) => {
+    setQueue((current) => current.map((item) => item.id === job.id ? { ...item, preset: batchPreset, presetOverridden: false } : item));
+    if (selectedJobId === job.id) selectPreset(batchPreset);
   };
 
   const moveJob = (jobId: string, direction: -1 | 1) => {
@@ -1093,13 +1112,19 @@ export default function PresetStudio() {
                             {job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}
                           </div>
                         </div>
-                        <div className="queue-item-settings mt-3 grid gap-2 border-t border-white/5 pt-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                          <label className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                            {t('jobPreset')}
-                            <select value={job.preset.id} disabled={transcoding || job.status === 'processing'} onChange={(event) => updateJobPreset(job, event.target.value)} className="mt-1 block w-full rounded-lg border border-white/10 bg-[#0b1020] px-2.5 py-2 text-xs normal-case tracking-normal text-slate-200 outline-none focus:border-cyan-300/60 disabled:opacity-50">
-                              {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
-                            </select>
-                          </label>
+                        <div className={`queue-item-settings mt-3 border-t border-white/5 pt-3 ${queue.length > 1 ? 'grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end' : 'flex justify-end'}`}>
+                          {queue.length > 1 && <details className="smooth-details rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+                            <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 text-xs text-slate-300">
+                              <span>{t('overridePreset')}</span>
+                              <span className="flex min-w-0 items-center gap-2 text-slate-500"><span className="max-w-44 truncate">{job.preset.name}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" /></span>
+                            </summary>
+                            <div className="mt-2 border-t border-white/5 pt-2">
+                              <select aria-label={t('overridePreset')} value={job.preset.id} disabled={transcoding || job.status === 'processing'} onChange={(event) => updateJobPreset(job, event.target.value)} className="block w-full rounded-lg border border-white/10 bg-[#0b1020] px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-cyan-300/60 disabled:opacity-50">
+                                {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+                              </select>
+                              {job.presetOverridden && <button type="button" onClick={() => clearJobPresetOverride(job)} className="mt-2 text-[11px] text-cyan-200 hover:text-cyan-100">{t('useBatchPreset')}</button>}
+                            </div>
+                          </details>}
                           <div className="text-[11px] text-slate-500">{t('estimatedOutput')}: <span className="text-slate-300">{getJobEstimate(job)}</span></div>
                         </div>
                       </motion.div>)}
@@ -1129,7 +1154,7 @@ export default function PresetStudio() {
                           builtIn={DEFAULT_PRESETS.some((base) => base.id === preset.id)}
                           reduceMotion={reduceMotion}
                           t={t}
-                          onSelect={() => selectPreset(preset)}
+                          onSelect={() => selectBatchPreset(preset)}
                           onFavorite={() => toggleFavorite(preset)}
                           onRename={() => renamePreset(preset)}
                           onEditTags={() => editPresetTags(preset)}
@@ -1145,7 +1170,7 @@ export default function PresetStudio() {
                     </button>
                   )}
                   {!filteredPresets.length && <div className="rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-slate-500">{t('noResults')}<br />{t('tryAnother')}</div>}
-                  <AnimatePresence initial={false}>{showHistory && <motion.div {...collapseProps} className="overflow-hidden rounded-2xl border border-indigo-300/20 bg-indigo-300/5"><div className="p-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{t('aiHistory')}</h3><button onClick={() => { setAiHistory([]); writeAIHistory([]); localStorage.removeItem(AI_HISTORY_STORAGE_KEY); }} className="text-xs text-slate-400 hover:text-rose-200">{t('clearHistory')}</button></div>{aiHistory.length ? <div className="space-y-2">{aiHistory.slice(0, 6).map((item, index) => <motion.button {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, x: -8 }, animate: { opacity: 1, x: 0 }, transition: { delay: index * .035 } })} key={item.id} onClick={() => { const restored: Preset = { ...item.preset, id: `history-${item.id}`, source: 'ai', tags: ['ai', 'history'] }; persistPresets([...presets, restored]); selectPreset(restored); setToast(t('historyRestored')); }} className="w-full rounded-xl border border-white/10 bg-black/15 p-3 text-left hover:border-indigo-300/40"><div className="flex items-center justify-between gap-2 text-xs text-white"><span className="truncate">{item.prompt}</span><span className="shrink-0 text-slate-500">{new Date(item.createdAt).toLocaleDateString(locale)}</span></div><div className="mt-1 text-[11px] text-slate-500">{item.provider} · {item.model}</div></motion.button>)}</div> : <p className="text-xs text-slate-500">{t('historyEmpty')}</p>}</div></motion.div>}</AnimatePresence>
+                  <AnimatePresence initial={false}>{showHistory && <motion.div {...collapseProps} className="overflow-hidden rounded-2xl border border-indigo-300/20 bg-indigo-300/5"><div className="p-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-semibold text-white">{t('aiHistory')}</h3><button onClick={() => { setAiHistory([]); writeAIHistory([]); localStorage.removeItem(AI_HISTORY_STORAGE_KEY); }} className="text-xs text-slate-400 hover:text-rose-200">{t('clearHistory')}</button></div>{aiHistory.length ? <div className="space-y-2">{aiHistory.slice(0, 6).map((item, index) => <motion.button {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, x: -8 }, animate: { opacity: 1, x: 0 }, transition: { delay: index * .035 } })} key={item.id} onClick={() => { const restored: Preset = { ...item.preset, id: `history-${item.id}`, source: 'ai', tags: ['ai', 'history'] }; persistPresets([...presets, restored]); selectBatchPreset(restored); setToast(t('historyRestored')); }} className="w-full rounded-xl border border-white/10 bg-black/15 p-3 text-left hover:border-indigo-300/40"><div className="flex items-center justify-between gap-2 text-xs text-white"><span className="truncate">{item.prompt}</span><span className="shrink-0 text-slate-500">{new Date(item.createdAt).toLocaleDateString(locale)}</span></div><div className="mt-1 text-[11px] text-slate-500">{item.provider} · {item.model}</div></motion.button>)}</div> : <p className="text-xs text-slate-500">{t('historyEmpty')}</p>}</div></motion.div>}</AnimatePresence>
                   <details className="ai-disclosure smooth-details rounded-2xl border border-indigo-300/20 bg-gradient-to-br from-indigo-400/10 to-cyan-300/5">
                     <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 p-5 text-sm font-semibold text-white">
                       <span className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-indigo-200" />{t('createWithAI')}</span>
@@ -1163,7 +1188,7 @@ export default function PresetStudio() {
                       {aiError && <p className="mt-3 text-xs text-rose-300"><AlertCircle className="mr-1 inline h-4 w-4" />{aiError}</p>}
                     </div>
                   </details>
-                  <div className="hidden justify-between sm:flex"><button onClick={() => setStep(0)} className="min-h-11 rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button onClick={() => setStep(2)} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
+                  <div className="hidden justify-between sm:flex"><button onClick={() => setStep(0)} className="min-h-11 rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button onClick={continueToAdjust} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div>
                   <div className="mobile-action-dock sticky bottom-3 z-10 rounded-2xl border border-cyan-300/20 bg-[#101827]/95 p-3 shadow-2xl shadow-black/30 backdrop-blur-xl sm:hidden">
                     <div className="mb-2 min-w-0">
                       <div className="truncate text-xs font-semibold text-white">{activePreset.name}</div>
@@ -1171,7 +1196,7 @@ export default function PresetStudio() {
                     </div>
                     <div className="grid grid-cols-[auto_1fr] gap-2">
                       <button onClick={() => setStep(0)} aria-label={t('back')} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-300"><ArrowLeft className="h-4 w-4" /></button>
-                      <button onClick={() => setStep(2)} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button>
+                      <button onClick={continueToAdjust} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020]">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button>
                     </div>
                   </div>
                 </section>}

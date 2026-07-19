@@ -53,3 +53,14 @@ test('studio controls render directly from shared capability lists', async () =>
   assert.match(studio, /VIDEO_CODEC_OPTIONS\.map/);
   assert.match(studio, /AUDIO_CODEC_OPTIONS\.map/);
 });
+
+test('preset workflow keeps single-file import free of duplicate controls', async () => {
+  const studio = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
+  const translations = await readFile(new URL('../lib/i18n.ts', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(translations, /Preset for this file/);
+  assert.match(studio, /queue\.length > 1 && <details/);
+  assert.match(studio, /onSelect=\{\(\) => selectBatchPreset\(preset\)\}/);
+  assert.match(studio, /const continueToAdjust = \(\) =>/);
+  assert.match(studio, /selectPreset\(selectedJob\?\.preset \|\| batchPreset\)/);
+});
