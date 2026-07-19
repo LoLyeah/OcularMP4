@@ -1,4 +1,4 @@
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 const CACHE_NAME = `ocularmp4-app-v${APP_VERSION}`;
 const RUNTIME_CACHE = `ocularmp4-runtime-v${APP_VERSION}`;
 

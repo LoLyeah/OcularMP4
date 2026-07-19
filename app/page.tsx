@@ -326,6 +326,11 @@ export default function PresetStudio() {
 
   const updateVideoCodec = (vcodec: PresetSettings['vcodec']) => {
     setCustomVcodec(vcodec);
+    if ((vcodec === 'av1' || vcodec === 'hevc') && !ffmpegHeavy && engine === 'ffmpeg') {
+      setToast(t('toastHeavyRequired'));
+    } else if (engine === 'ffmpeg' && !ffmpeg && !ffmpegHeavy) {
+      setToast(t('toastFfmpegRequired'));
+    }
     setCustomArgs((current) => resolveFfmpegCodecArgs({
       format: customFormat,
       vcodec,
@@ -1397,8 +1402,8 @@ export default function PresetStudio() {
                         {nativeMode && <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-400">{t(nativeSourceUnsupported ? 'audioNeedsFfmpeg' : 'nativeOutputNote')}</p>}
                       </div>
                       <div role="group" aria-label={t('engine')} className="grid shrink-0 grid-cols-2 gap-1 rounded-xl border border-white/10 bg-black/15 p-1">
-                        <button type="button" disabled={queue.length > 1 || nativeSourceUnsupported} aria-pressed={nativeMode && !nativeSourceUnsupported} onClick={() => setEngine('native')} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${nativeMode && !nativeSourceUnsupported ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400 hover:text-white'} disabled:opacity-35`}>{t('quickOutput')}</button>
-                        <button type="button" disabled={ffmpegLoading} aria-pressed={!nativeMode} onClick={() => ffmpeg ? setEngine('ffmpeg') : void loadFFmpeg()} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${!nativeMode ? 'bg-indigo-300 text-[#0b1020]' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}>{ffmpegLoading ? t('loadingEngine') : t('exactOutput')}</button>
+                        <button type="button" disabled={queue.length > 1 || nativeSourceUnsupported} aria-pressed={nativeMode && !nativeSourceUnsupported} onClick={() => { setEngine('native'); if (nativeSourceUnsupported) setToast(t('toastAudioNeedsFfmpeg')); }} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${nativeMode && !nativeSourceUnsupported ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400 hover:text-white'} disabled:opacity-35`}>{t('quickOutput')}</button>
+                        <button type="button" disabled={ffmpegLoading} aria-pressed={!nativeMode} onClick={() => { if (ffmpeg || ffmpegHeavy) { setEngine('ffmpeg'); } else { setToast(t('toastFfmpegRequired')); void loadFFmpeg(); } }} className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold ${!nativeMode ? 'bg-indigo-300 text-[#0b1020]' : 'text-slate-400 hover:text-white'} disabled:opacity-50`}>{ffmpegLoading ? t('loadingEngine') : t('exactOutput')}</button>
                       </div>
                     </div>
                   </section>
@@ -1650,8 +1655,36 @@ export default function PresetStudio() {
       <AnimatePresence>
         {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.16, ease: 'easeOut' } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-[#223029] bg-[#121815] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button aria-label={`${t('close')} ${panel === 'guide' ? t('guide') : t('settingsTitle')}`} onClick={() => setPanel(null)} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} ffmpegHeavy={ffmpegHeavy} ffmpegHeavyLoading={ffmpegHeavyLoading} onUpdate={updateSettings} onLoad={loadFFmpeg} onLoadHeavy={loadFFmpegHeavy} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
-      <AnimatePresence>{updateWorker && <motion.div role="status" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 6 }, transition: { duration: .18, ease: 'easeOut' } })} className="fixed bottom-5 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-sm border border-[#00ff9d]/40 bg-[#121815]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:right-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-[#00ff9d]/15 text-[#00ff9d]"><Sparkles className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="text-xs font-tech-mono font-bold text-white">{t('updateAvailable')}</div><p className="mt-1 text-xs font-tech-mono leading-5 text-slate-400">{t('updateAvailableBody')}</p><button onClick={applyAppUpdate} disabled={transcoding} className="mt-3 brutal-btn-primary min-h-9 px-3 py-1.5 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">{t('updateNow')}</button></div></div></motion.div>}</AnimatePresence>
-      <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-[#00ff9d]/40 bg-[#121815] px-4 py-3 text-xs font-tech-mono text-[#00ff9d] shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 }, transition: { duration: .14, ease: 'easeOut' } })}>{toast}</motion.div>}</AnimatePresence>
+      <AnimatePresence>{updateWorker && <motion.div role="status" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 6 }, transition: { duration: .18, ease: 'easeOut' } })} className="fixed bottom-5 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-sm border border-[#00ff9d]/40 bg-[#121815]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:right-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-[#00ff9d]/15 text-[#00ff9d]"><Sparkles className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="flex items-center justify-between text-xs font-tech-mono font-bold text-white"><span>{t('updateAvailable')}</span><span className="rounded border border-[#00ff9d]/40 bg-[#00ff9d]/10 px-1.5 py-0.5 text-[10px] text-[#00ff9d]">v1.3.0</span></div><p className="mt-1 text-xs font-tech-mono leading-5 text-slate-400">{t('updateAvailableBody')}</p><button onClick={applyAppUpdate} disabled={transcoding} className="mt-3 brutal-btn-primary min-h-9 px-3 py-1.5 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">{t('updateNow')}</button></div></div></motion.div>}</AnimatePresence>
+      <AnimatePresence>{toast && (
+        <motion.div
+          role="status"
+          className={`fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-sm border px-4 py-3 text-xs font-tech-mono shadow-2xl backdrop-blur-xl ${
+            toast.includes('⚠️') || toast.includes('error') || toast.includes('failed')
+              ? 'border-amber-400/60 bg-[#18140f]/95 text-amber-300 shadow-amber-950/40'
+              : toast.includes('⚡') || toast.includes('Full Codec') || toast.includes('ℹ️')
+              ? 'border-cyan-400/60 bg-[#0c161c]/95 text-cyan-300 shadow-cyan-950/40'
+              : 'border-[#00ff9d]/50 bg-[#121815]/95 text-[#00ff9d] shadow-emerald-950/40'
+          }`}
+          {...(reduceMotion ? {} : { initial: { opacity: 0, y: 12, scale: 0.96 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: 8, scale: 0.96 }, transition: { duration: .18, ease: 'easeOut' } })}
+        >
+          {toast.includes('⚠️') || toast.includes('error') || toast.includes('failed') ? (
+            <AlertCircle className="h-4 w-4 shrink-0 text-amber-300" />
+          ) : toast.includes('⚡') || toast.includes('Full Codec') || toast.includes('ℹ️') ? (
+            <Sparkles className="h-4 w-4 shrink-0 text-cyan-300" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-[#00ff9d]" />
+          )}
+          <span>{toast}</span>
+          <button
+            onClick={() => setToast('')}
+            aria-label={t('close')}
+            className="ml-2 text-slate-400 hover:text-white"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </motion.div>
+      )}</AnimatePresence>
     </motion.main>
   );
 }
