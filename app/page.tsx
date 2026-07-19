@@ -355,16 +355,11 @@ export default function PresetStudio() {
   };
   const nativeMode = engine === 'native';
   const nativeSourceUnsupported = Boolean(selectedFile?.type.startsWith('audio/'));
-  const effectiveFormat = nativeMode && !nativeSourceUnsupported ? 'webm' : configuredPreset.settings.format;
-  const effectiveVideoCodec = nativeMode && !nativeSourceUnsupported ? 'vp9' : configuredPreset.settings.vcodec;
-  const effectiveAudio = nativeMode && !nativeSourceUnsupported ? false : configuredPreset.settings.audioEnabled;
-  const exactEngineRecommended = nativeMode && (
-    configuredPreset.settings.format !== 'webm'
-    || configuredPreset.settings.vcodec !== 'vp9'
-    || configuredPreset.settings.audioEnabled
-    || queue.length > 1
-    || nativeSourceUnsupported
-  );
+  const effectiveFormat = configuredPreset.settings.format;
+  const effectiveVideoCodec = configuredPreset.settings.vcodec;
+  const effectiveAudio = configuredPreset.settings.audioEnabled;
+  // Only warn when audio-only files truly need FFmpeg (WebCodecs cannot decode all audio containers)
+  const exactEngineRecommended = nativeMode && nativeSourceUnsupported;
   const outputSummary = nativeMode && nativeSourceUnsupported ? [
     configuredPreset.settings.format.toUpperCase(),
     t('ffmpegRequired'),
@@ -1374,8 +1369,7 @@ export default function PresetStudio() {
                   <div className="settings-grid grid gap-4 rounded-sm border border-[#223029] bg-[#121815] p-5 sm:grid-cols-2">
                     <Field label={t('format')}>
                       <select
-                        disabled={nativeMode}
-                        value={nativeMode && !nativeSourceUnsupported ? 'webm' : customFormat}
+                        value={customFormat}
                         onChange={(event) => {
                           const nextFormat = event.target.value as PresetSettings['format'];
                           const sanitized = sanitizeCodecSettings(nextFormat, customVcodec, customAcodec, engine);
@@ -1395,8 +1389,7 @@ export default function PresetStudio() {
                     </Field>
                     <Field label={t('videoCodec')}>
                       <select
-                        disabled={nativeMode}
-                        value={nativeMode && !nativeSourceUnsupported ? 'vp9' : customVcodec}
+                        value={customVcodec}
                         onChange={(event) => updateVideoCodec(event.target.value as PresetSettings['vcodec'])}
                       >
                         {VIDEO_CODEC_OPTIONS.filter((opt) => getCompatibleVideoCodecs(customFormat, engine).includes(opt.value)).map((option) => (
@@ -1524,7 +1517,7 @@ export default function PresetStudio() {
                     )}
                     <Field label={t('audioCodec')}>
                       <select
-                        disabled={nativeMode || !customAudioEnabled}
+                        disabled={!customAudioEnabled}
                         value={customAudioEnabled ? customAcodec : 'none'}
                         onChange={(event) => updateAudioCodec(event.target.value as PresetSettings['acodec'])}
                       >
@@ -1535,7 +1528,7 @@ export default function PresetStudio() {
                     </Field>
                     <Field label={t('audioBitrate')}>
                       <select
-                        disabled={nativeMode || !customAudioEnabled || customAcodec === 'none'}
+                        disabled={!customAudioEnabled || customAcodec === 'none'}
                         value={customAbitrate}
                         onChange={(event) => {
                           const ab = event.target.value;
@@ -1553,19 +1546,31 @@ export default function PresetStudio() {
                         {getAudioBitrateRecommendation(customAudioEnabled ? customAcodec : 'none')}
                       </span>
                     </Field>
-                    <div className="sm:col-span-2"><span className="mb-2 block text-xs text-slate-400">{t('audioTrack')}</span><button disabled={nativeMode} onClick={updateAudioEnabled} className={`flex min-h-11 w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm disabled:cursor-not-allowed disabled:opacity-55 ${effectiveAudio ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-black/20 text-slate-500'}`}>{effectiveAudio ? t('enabled') : t('videoOnly')}{effectiveAudio ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button></div>
+                    <div className="sm:col-span-2"><span className="mb-2 block text-xs text-slate-400">{t('audioTrack')}</span><button onClick={updateAudioEnabled} className={`flex min-h-11 w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm ${effectiveAudio ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-black/20 text-slate-500'}`}>{effectiveAudio ? t('enabled') : t('videoOnly')}{effectiveAudio ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button></div>
                   </div>
-                  <div className="terminal-block my-4">
-                    <div className="flex items-center justify-between border-b border-[#223029] pb-2 mb-2 text-xs font-tech-mono text-[#8a9e95]">
-                      <span>COMMAND PREVIEW</span>
-                      <span className="text-[#00ff9d]">FFMPEG.WASM 0.12.6</span>
+                  {nativeMode ? (
+                    <div className="terminal-block my-4">
+                      <div className="flex items-center justify-between border-b border-[#223029] pb-2 mb-2 text-xs font-tech-mono text-[#8a9e95]">
+                        <span>ENGINE</span>
+                        <span className="text-[#00ff9d]">QUICK ENGINE · WEBCODECS API</span>
+                      </div>
+                      <div className="font-mono text-xs text-[#00ff9d] break-all whitespace-pre-wrap">
+                        WebCodecs encode: {customFormat.toUpperCase()} · {customVcodec.toUpperCase()} · {customResolution} · {customFps === 0 ? 'Original' : `${customFps} FPS`}{customAudioEnabled ? ` · ${customAcodec.toUpperCase()} Audio` : ' · No Audio'}
+                      </div>
                     </div>
-                    <div className="terminal-prompt break-all whitespace-pre-wrap font-mono text-xs text-[#00ff9d]">
-                      ffmpeg -i input.{selectedFile ? selectedFile.name.split('.').pop() || 'mp4' : 'mp4'} {customArgs} output.{customFormat}
+                  ) : (
+                    <div className="terminal-block my-4">
+                      <div className="flex items-center justify-between border-b border-[#223029] pb-2 mb-2 text-xs font-tech-mono text-[#8a9e95]">
+                        <span>COMMAND PREVIEW</span>
+                        <span className="text-[#00ff9d]">FFMPEG.WASM 0.12.6</span>
+                      </div>
+                      <div className="terminal-prompt break-all whitespace-pre-wrap font-mono text-xs text-[#00ff9d]">
+                        ffmpeg -i input.{selectedFile ? selectedFile.name.split('.').pop() || 'mp4' : 'mp4'} {customArgs} output.{customFormat}
+                      </div>
                     </div>
-                  </div>
+                  )}
                   {!nativeMode ? <details className="smooth-details rounded-sm border border-[#223029] bg-[#121815] p-4"><summary className="flex min-h-10 cursor-pointer list-none items-center justify-between text-xs font-tech-mono text-white">{t('advanced')}<ChevronDown className="h-4 w-4 text-slate-500" /></summary><textarea value={customArgs} onChange={(event) => setCustomArgs(event.target.value)} rows={3} className="mt-3 w-full rounded-sm border border-[#223029] bg-[#060908] p-3 font-mono text-xs text-[#00ff9d] outline-none focus:border-[#00ff9d]/60" /></details> : null}
-                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="min-h-11 rounded-sm border border-[#00ff9d]/30 px-4 py-3 text-xs font-tech-mono text-[#00ff9d] hover:bg-[#00ff9d]/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-11 rounded-sm border border-[#223029] px-4 py-3 text-xs font-tech-mono text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || ffmpegLoading || !selectedFile || (nativeMode && queue.length > 1)} onClick={nativeMode && nativeSourceUnsupported ? () => void loadFFmpeg() : handleTranscode} className="brutal-btn-primary min-h-11 flex-1 px-5 py-3 text-xs font-tech-mono disabled:opacity-40">{ffmpegLoading ? t('loadingEngine') : transcoding ? t(conversionStage) : nativeMode && nativeSourceUnsupported ? t('loadExactEngine') : nativeMode ? t('convertToWebm') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="min-h-11 rounded-sm border border-[#00ff9d]/30 px-4 py-3 text-xs font-tech-mono text-[#00ff9d] hover:bg-[#00ff9d]/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-11 rounded-sm border border-[#223029] px-4 py-3 text-xs font-tech-mono text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || ffmpegLoading || !selectedFile} onClick={nativeMode && nativeSourceUnsupported ? () => void loadFFmpeg() : handleTranscode} className="brutal-btn-primary min-h-11 flex-1 px-5 py-3 text-xs font-tech-mono disabled:opacity-40">{ffmpegLoading ? t('loadingEngine') : transcoding ? t(conversionStage) : nativeMode && nativeSourceUnsupported ? t('loadExactEngine') : nativeMode ? t('convertToWebm') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
                   <AnimatePresence>{transcoding && <motion.div {...collapseProps} role="status" aria-live="polite" className="overflow-hidden rounded-sm border border-[#00ff9d]/30 bg-[#121815]"><div className="p-4"><div className="mb-2 flex justify-between text-xs font-tech-mono text-slate-400"><span>{t(conversionStage)}</span><span className="text-[#00ff9d]">{progress}%</span></div><div className="h-2 overflow-hidden rounded-sm bg-[#223029]"><motion.div className="h-full bg-[#00ff9d]" animate={{ width: `${progress}%` }} transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'linear' }} /></div></div></motion.div>}</AnimatePresence>
                 </section>}
 
