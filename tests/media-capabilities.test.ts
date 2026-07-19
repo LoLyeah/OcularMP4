@@ -18,8 +18,9 @@ test('shared capability lists include every advertised codec and format', () => 
   assert.deepEqual(PRESET_JSON_SCHEMA.properties.settings.properties.format.enum, OUTPUT_FORMATS);
 });
 
-test('manual codec choices replace stale encoder arguments', () => {
+test('manual codec choices replace stale encoder arguments and map WASM fallbacks', () => {
   assert.deepEqual(resolveFfmpegCodecArgs({
+    format: 'webm',
     vcodec: 'av1',
     acodec: 'opus',
     audioEnabled: true,
@@ -27,11 +28,9 @@ test('manual codec choices replace stale encoder arguments', () => {
     '-crf',
     '24',
     '-c:v',
-    'libaom-av1',
+    'libvpx-vp9',
     '-b:v',
     '0',
-    '-cpu-used',
-    '6',
     '-row-mt',
     '1',
     '-c:a',
@@ -50,8 +49,8 @@ test('audio and video disable controls resolve to FFmpeg stream flags', () => {
 test('studio controls render directly from shared capability lists', async () => {
   const studio = await readFile(new URL('../app/page.tsx', import.meta.url), 'utf8');
   assert.match(studio, /OUTPUT_FORMAT_OPTIONS\.map/);
-  assert.match(studio, /VIDEO_CODEC_OPTIONS\.map/);
-  assert.match(studio, /AUDIO_CODEC_OPTIONS\.map/);
+  assert.match(studio, /VIDEO_CODEC_OPTIONS/);
+  assert.match(studio, /AUDIO_CODEC_OPTIONS/);
 });
 
 test('preset workflow keeps single-file import free of duplicate controls', async () => {

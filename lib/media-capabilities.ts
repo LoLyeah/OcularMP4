@@ -10,7 +10,7 @@ export const OUTPUT_FORMAT_OPTIONS = [
 export const VIDEO_CODEC_OPTIONS = [
   { value: 'h264', label: 'H.264', encoder: 'libx264' },
   { value: 'vp9', label: 'VP9', encoder: 'libvpx-vp9' },
-  { value: 'hevc', label: 'HEVC', encoder: 'libx265' },
+  { value: 'hevc', label: 'HEVC (H.265)', encoder: 'libx265' },
   { value: 'av1', label: 'AV1', encoder: 'libaom-av1' },
   { value: 'gif', label: 'GIF', encoder: 'gif' },
   { value: 'none', label: 'None', encoder: null },
@@ -25,20 +25,36 @@ export const AUDIO_CODEC_OPTIONS = [
 
 export const RESOLUTION_OPTIONS = [
   { value: 'original', label: 'Original' },
+  { value: '4k', label: '4K (2160p)' },
   { value: '1080p', label: '1080p' },
   { value: '720p', label: '720p' },
   { value: '480p', label: '480p' },
   { value: '360p', label: '360p' },
 ] as const;
 
-export const FRAME_RATE_OPTIONS = [60, 30, 24, 15, 12] as const;
+export const FRAME_RATE_OPTIONS = [0, 60, 30, 24, 15, 12] as const;
 
 export const VIDEO_BITRATE_OPTIONS = [
-  { value: 'auto', label: 'Auto' },
-  { value: '5000k', label: '5 Mbps' },
-  { value: '2500k', label: '2.5 Mbps' },
-  { value: '1200k', label: '1.2 Mbps' },
-  { value: '500k', label: '500 Kbps' },
+  { value: 'auto', label: 'Auto (CRF / Quality)' },
+  { value: '500k', label: '500 Kbps (Very Small)' },
+  { value: '1200k', label: '1.2 Mbps (SD / Mobile)' },
+  { value: '2500k', label: '2.5 Mbps (720p Standard)' },
+  { value: '5000k', label: '5 Mbps (1080p Standard)' },
+  { value: '8000k', label: '8 Mbps (1080p High)' },
+  { value: '15000k', label: '15 Mbps (4K Compact)' },
+  { value: '25000k', label: '25 Mbps (4K Standard)' },
+  { value: '40000k', label: '40 Mbps (4K High)' },
+] as const;
+
+export const AUDIO_BITRATE_OPTIONS = [
+  { value: 'auto', label: 'Auto (Recommended)' },
+  { value: '64k', label: '64 Kbps (Voice / Low)' },
+  { value: '96k', label: '96 Kbps (Speech)' },
+  { value: '128k', label: '128 Kbps (Standard Stereo)' },
+  { value: '160k', label: '160 Kbps (High Quality)' },
+  { value: '192k', label: '192 Kbps (HQ Music)' },
+  { value: '256k', label: '256 Kbps (Studio Stereo)' },
+  { value: '320k', label: '320 Kbps (Maximum Quality)' },
 ] as const;
 
 export const OUTPUT_FORMATS = OUTPUT_FORMAT_OPTIONS.map(({ value }) => value);
@@ -51,7 +67,80 @@ export type VideoCodec = (typeof VIDEO_CODEC_OPTIONS)[number]['value'];
 export type AudioCodec = (typeof AUDIO_CODEC_OPTIONS)[number]['value'];
 export type Resolution = (typeof RESOLUTION_OPTIONS)[number]['value'];
 
+export function getCompatibleAudioCodecs(format: OutputFormat): AudioCodec[] {
+  if (format === 'mp4') return ['aac', 'mp3', 'none'];
+  if (format === 'webm') return ['opus', 'none'];
+  if (format === 'mp3') return ['mp3'];
+  if (format === 'aac') return ['aac'];
+  if (format === 'gif') return ['none'];
+  return ['aac', 'opus', 'mp3', 'none'];
+}
+
+export function getCompatibleVideoCodecs(format: OutputFormat): VideoCodec[] {
+  if (format === 'webm') return ['vp9', 'av1', 'none'];
+  if (format === 'mp4') return ['h264', 'hevc', 'av1', 'none'];
+  if (format === 'gif') return ['gif'];
+  if (format === 'mp3' || format === 'aac') return ['none'];
+  return ['h264', 'vp9', 'hevc', 'av1', 'gif', 'none'];
+}
+
+export function sanitizeCodecSettings(
+  format: OutputFormat,
+  vcodec: VideoCodec,
+  acodec: AudioCodec
+): { vcodec: VideoCodec; acodec: AudioCodec } {
+  const validV = getCompatibleVideoCodecs(format);
+  const validA = getCompatibleAudioCodecs(format);
+  return {
+    vcodec: validV.includes(vcodec) ? vcodec : validV[0],
+    acodec: validA.includes(acodec) ? acodec : validA[0],
+  };
+}
+
+export function getVideoBitrateRecommendation(resolution: Resolution, vcodec: VideoCodec): string {
+  if (resolution === '4k') {
+    return vcodec === 'av1' || vcodec === 'hevc' ? 'Rec: 15 - 25 Mbps' : 'Rec: 25 - 40 Mbps';
+  }
+  if (resolution === '1080p') {
+    return vcodec === 'av1' || vcodec === 'hevc' ? 'Rec: 2.5 - 5 Mbps' : 'Rec: 5 - 8 Mbps';
+  }
+  if (resolution === '720p') {
+    return vcodec === 'av1' || vcodec === 'hevc' ? 'Rec: 1.2 - 2.5 Mbps' : 'Rec: 2.5 - 5 Mbps';
+  }
+  if (resolution === '480p' || resolution === '360p') {
+    return 'Rec: 500 Kbps - 1.2 Mbps';
+  }
+  return 'Rec: Auto (CRF Quality)';
+}
+
+export function getAudioBitrateRecommendation(acodec: AudioCodec, abitrate?: string): string {
+  if (acodec === 'none') return 'Audio Muted';
+  if (abitrate === 'auto' || !abitrate) {
+    if (acodec === 'opus') return 'Rec: Auto (80 - 128 Kbps Opus)';
+    if (acodec === 'aac') return 'Rec: Auto (128 - 192 Kbps AAC)';
+    if (acodec === 'mp3') return 'Rec: Auto (160 - 320 Kbps MP3)';
+    return 'Rec: Auto (Codec default)';
+  }
+  if (acodec === 'opus') return 'Rec: 80 - 128 Kbps (High Efficiency)';
+  if (acodec === 'aac') return 'Rec: 128 - 192 Kbps (Standard Stereo)';
+  if (acodec === 'mp3') return 'Rec: 160 - 320 Kbps (HQ MP3)';
+  return 'Rec: 128 Kbps';
+}
+
+export function calculateBitrateForTargetSize(
+  targetMB: number,
+  durationSeconds: number,
+  audioBitrateKbps: number = 128
+): number | null {
+  if (targetMB <= 0 || durationSeconds <= 0) return null;
+  const totalTargetKilobits = targetMB * 8 * 1024;
+  const totalBitrateKbps = totalTargetKilobits / durationSeconds;
+  const videoBitrateKbps = Math.max(100, Math.round(totalBitrateKbps - audioBitrateKbps));
+  return videoBitrateKbps;
+}
+
 interface ManagedEncodingSettings {
+  format?: OutputFormat;
   vcodec: VideoCodec;
   acodec: AudioCodec;
   audioEnabled: boolean;
@@ -73,29 +162,53 @@ function removeFlags(args: string[], flags: Set<string>) {
   return output;
 }
 
-function optionValue(args: string[], flags: Set<string>) {
-  const index = args.findIndex((argument) => flags.has(argument));
-  return index >= 0 ? args[index + 1] : undefined;
-}
-
 export function resolveFfmpegCodecArgs(settings: ManagedEncodingSettings, args: string[]) {
-  const video = VIDEO_CODEC_OPTIONS.find(({ value }) => value === settings.vcodec);
-  const audio = AUDIO_CODEC_OPTIONS.find(({ value }) => value === settings.acodec);
-  const previousVideoEncoder = optionValue(args, VIDEO_FLAGS);
-  const codecChanged = Boolean(previousVideoEncoder && previousVideoEncoder !== video?.encoder);
+  let vcodec = settings.vcodec;
+  let acodec = settings.acodec;
+  const format = settings.format || 'mp4';
 
-  let resolved = removeFlags(args, new Set([...VIDEO_FLAGS, ...AUDIO_FLAGS]));
+  const sanitized = sanitizeCodecSettings(format, vcodec, acodec);
+  vcodec = sanitized.vcodec;
+  acodec = sanitized.acodec;
+
+  const video = VIDEO_CODEC_OPTIONS.find(({ value }) => value === vcodec);
+  const audio = AUDIO_CODEC_OPTIONS.find(({ value }) => value === acodec);
+
+  // Remove previous codec and tuning flags to prevent option collisions (e.g. -cpu-used with libx264)
+  const allCodecFlags = new Set([...VIDEO_FLAGS, ...AUDIO_FLAGS, ...VIDEO_TUNING_FLAGS]);
+  let resolved = removeFlags(args, allCodecFlags);
   resolved = resolved.filter((argument) => argument !== '-vn' && argument !== '-an');
-  if (codecChanged) resolved = removeFlags(resolved, VIDEO_TUNING_FLAGS);
 
-  if (video?.encoder) resolved.push('-c:v', video.encoder);
-  else resolved.push('-vn');
-  if (codecChanged && settings.vcodec === 'av1') resolved.push('-b:v', '0', '-cpu-used', '6', '-row-mt', '1');
-  if (codecChanged && settings.vcodec === 'vp9') resolved.push('-b:v', '0', '-row-mt', '1');
-  if (codecChanged && (settings.vcodec === 'h264' || settings.vcodec === 'hevc')) resolved.push('-preset', 'medium');
+  // WASM binary fallback: standard ffmpeg.wasm UMD binary compiles libx264 and libvpx-vp9.
+  // It does NOT compile libx265 or libaom-av1.
+  let encoderName: string | null | undefined = video?.encoder;
+  if (vcodec === 'hevc' || vcodec === 'av1') {
+    encoderName = format === 'webm' ? 'libvpx-vp9' : 'libx264';
+  }
 
-  if (settings.audioEnabled && audio?.encoder) resolved.push('-c:a', audio.encoder);
-  else resolved.push('-an');
+  if (encoderName) {
+    resolved.push('-c:v', encoderName);
+    if (encoderName === 'libx264') {
+      resolved.push('-preset', 'medium');
+    } else if (encoderName === 'libvpx-vp9') {
+      resolved.push('-b:v', '0', '-row-mt', '1');
+    }
+  } else {
+    resolved.push('-vn');
+  }
+
+  let audioEncoder: string | null | undefined = audio?.encoder;
+  if (format === 'mp4' && acodec === 'opus') {
+    audioEncoder = 'aac';
+  } else if (format === 'webm' && (acodec === 'aac' || acodec === 'mp3')) {
+    audioEncoder = 'libopus';
+  }
+
+  if (settings.audioEnabled && audioEncoder) {
+    resolved.push('-c:a', audioEncoder);
+  } else {
+    resolved.push('-an');
+  }
 
   return resolved;
 }

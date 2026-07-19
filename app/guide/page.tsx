@@ -127,6 +127,7 @@ export default function GuidePage() {
   const [reduceMotion, setReduceMotion] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isStandalone, setIsStandalone] = useState(false);
+
   useEffect(() => {
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const syncPreferences = () => {
@@ -144,6 +145,7 @@ export default function GuidePage() {
       media.removeEventListener('change', syncPreferences);
     };
   }, []);
+
   useEffect(() => {
     const standalone = window.matchMedia('(display-mode: standalone)');
     const updateDisplayMode = () => setIsStandalone(standalone.matches);
@@ -168,6 +170,7 @@ export default function GuidePage() {
       window.removeEventListener('appinstalled', handleInstalled);
     };
   }, []);
+
   const copy = content[locale];
   const installPwa = async () => {
     if (!installPrompt) return;
@@ -177,58 +180,63 @@ export default function GuidePage() {
   };
 
   return (
-    <main className="guide-shell min-h-screen bg-transparent text-slate-100">
-      <header className="guide-header sticky top-0 z-20 border-b border-white/10 bg-[#0b1020]/90 backdrop-blur-xl">
+    <motion.main 
+      initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+      className="guide-shell min-h-screen bg-[#0a0e0c] text-[#f3f6f4]"
+    >
+      <header className="guide-header sticky top-0 z-20 border-b border-[#223029] bg-[#0a0e0c]/92 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
           <div className="flex min-w-0 items-center gap-2 sm:gap-4">
             <Link href="/" className="flex min-w-0 items-center gap-3">
-              <Image src="/logo-mark.svg" alt="OcularMP4" width={38} height={38} className="shrink-0 rounded-xl" />
-              <span className="hidden truncate font-semibold tracking-tight sm:inline">OcularMP4 <span className="font-normal text-slate-500">/ Wiki</span></span>
+              <Image src="/logo-mark.svg" alt="OcularMP4" width={38} height={38} className="shrink-0 rounded-sm" />
+              <span className="hidden truncate font-editorial text-lg font-bold uppercase tracking-wide sm:inline">OcularMP4 <span className="font-tech-mono text-xs font-normal text-[#8a9e95]">/ Wiki</span></span>
             </Link>
-            <Link href="/" className="inline-flex min-h-11 items-center whitespace-nowrap rounded-xl border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-1 inline h-3.5 w-3.5" />{copy.back}</Link>
+            <Link href="/" className="brutal-badge text-[#8a9e95] hover:text-[#00ff9d] hover:border-[#00ff9d]/40"><ArrowLeft className="mr-1 inline h-3.5 w-3.5" />{copy.back}</Link>
           </div>
           <div className="flex items-center gap-2">
-            <div role="group" aria-label="Language" className="flex rounded-lg border border-white/10 bg-black/20 p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} aria-pressed={locale === item} onClick={() => setLocale(item)} className={`relative min-h-11 min-w-11 rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'text-[#0b1020]' : 'text-slate-400'}`}>{locale === item && <motion.span layoutId="wiki-active-language" className="absolute inset-0 rounded-md bg-cyan-300" transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'easeOut' }} />}<span className="relative">{item.toUpperCase()}</span></button>)}</div>
+            <div role="group" aria-label="Language" className="flex rounded-sm border border-[#223029] bg-[#0d1310] p-0.5">{(['en', 'id'] as Locale[]).map((item) => <button key={item} aria-pressed={locale === item} onClick={() => setLocale(item)} className={`relative min-h-9 min-w-9 rounded-sm px-2 py-1 text-xs font-tech-mono font-bold ${locale === item ? 'text-[#0a0e0c]' : 'text-[#8a9e95]'}`}>{locale === item && <motion.span layoutId="wiki-active-language" className="absolute inset-0 rounded-sm bg-[#00ff9d]" transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'easeOut' }} />}<span className="relative">{item.toUpperCase()}</span></button>)}</div>
           </div>
         </div>
       </header>
       <div className="mx-auto grid max-w-7xl gap-10 px-5 py-10 lg:grid-cols-[220px_1fr] lg:px-8">
-        <details className="smooth-details rounded-2xl border border-white/10 bg-[#111a30] p-3 lg:hidden">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between rounded-xl px-3 text-sm font-semibold text-white">{copy.toc}<ChevronRight className="h-4 w-4 text-slate-500" /></summary>
-          <nav className="mt-2 space-y-1 border-t border-white/10 pt-2">
-            {copy.sections.map(([id, label], index) => <a key={id} href={`#${id}`} className="flex min-h-11 items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white"><span className="text-xs text-slate-500">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-500" /></a>)}
+        <details className="smooth-details rounded-sm border border-[#223029] bg-[#121815] p-3 lg:hidden">
+          <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between rounded-sm px-3 font-tech-mono text-xs font-bold text-white">{copy.toc}<ChevronRight className="h-4 w-4 text-slate-500" /></summary>
+          <nav className="mt-2 space-y-1 border-t border-[#223029] pt-2">
+            {copy.sections.map(([id, label], index) => <a key={id} href={`#${id}`} className="flex min-h-10 items-center gap-2 rounded-sm px-3 py-2 font-tech-mono text-xs text-slate-400 hover:bg-white/5 hover:text-[#00ff9d]"><span className="text-xs text-[#8a9e95]">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-500" /></a>)}
           </nav>
         </details>
         <aside className="hidden lg:sticky lg:top-24 lg:block lg:h-fit">
-          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-200">{copy.badge}</div>
-          <nav className="space-y-1 rounded-2xl border border-white/10 bg-[#111a30] p-3">
-            <div className="mb-3 px-3 text-xs font-semibold text-slate-400">{copy.toc}</div>
-            {copy.sections.map(([id, label], index) => <a key={id} href={`#${id}`} className="group flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 hover:bg-white/5 hover:text-white"><span className="text-xs text-slate-600">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-600 group-hover:translate-x-0.5" /></a>)}
+          <div className="mb-3 font-tech-mono text-[11px] font-bold uppercase tracking-[0.2em] text-[#00ff9d]">{copy.badge}</div>
+          <nav className="space-y-1 rounded-sm border border-[#223029] bg-[#121815] p-3">
+            <div className="mb-3 px-3 font-tech-mono text-xs font-bold text-[#8a9e95]">{copy.toc}</div>
+            {copy.sections.map(([id, label], index) => <a key={id} href={`#${id}`} className="group flex items-center gap-2 rounded-sm px-3 py-2 font-tech-mono text-xs text-slate-400 hover:bg-white/5 hover:text-[#00ff9d]"><span className="text-xs text-[#8a9e95]">{String(index + 1).padStart(2, '0')}</span>{label}<ChevronRight className="ml-auto h-3.5 w-3.5 text-slate-600 group-hover:translate-x-0.5 group-hover:text-[#00ff9d]" /></a>)}
           </nav>
         </aside>
         <AnimatePresence initial={false}>
-          <motion.article key={locale} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: .12, ease: 'easeOut' } })} className="min-w-0 max-w-4xl">
-            <div className="mb-12 border-b border-white/10 pb-10"><div className="mb-4 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100"><BookOpen className="h-3.5 w-3.5" />{copy.badge}</div><h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">{copy.title}</h1><p className="mt-5 max-w-2xl text-base leading-8 text-slate-400">{copy.intro}</p></div>
+          <motion.article key={locale} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: .14, ease: 'easeOut' } })} className="min-w-0 max-w-4xl">
+            <div className="mb-12 border-b border-[#223029] pb-10"><div className="brutal-badge mb-4 border-[#00ff9d]/40 bg-[#00ff9d]/10 text-[#00ff9d]"><BookOpen className="h-3.5 w-3.5" />{copy.badge}</div><h1 className="font-editorial max-w-3xl text-4xl font-bold uppercase tracking-wide text-white sm:text-5xl">{copy.title}</h1><p className="mt-5 max-w-2xl font-mono text-sm leading-7 text-slate-400">{copy.intro}</p></div>
             <GuideSection reduceMotion={reduceMotion} id="overview" title={copy.overviewTitle} icon={BookOpen}><p>{copy.overviewBody}</p></GuideSection>
-            <GuideSection reduceMotion={reduceMotion} id="workflow" title={copy.workflowTitle} icon={Workflow}><div className="grid gap-3 sm:grid-cols-2">{copy.workflow.map(([number, title, body], index) => <RevealCard key={number} index={index} reduceMotion={reduceMotion}><div className="mb-4 grid h-8 w-8 place-items-center rounded-lg bg-cyan-300/10 text-sm font-bold text-cyan-200">{number}</div><h3 className="mb-2 font-semibold text-white">{title}</h3><p>{body}</p></RevealCard>)}</div></GuideSection>
-            <GuideSection reduceMotion={reduceMotion} id="engines" title={copy.enginesTitle} icon={Cpu}><div className="grid gap-4 sm:grid-cols-2">{copy.engines.map(([title, body], index) => <RevealCard key={title} index={index} reduceMotion={reduceMotion}><h3 className="mb-2 font-semibold text-white">{title}</h3><p>{body}</p></RevealCard>)}</div></GuideSection>
-            <GuideSection reduceMotion={reduceMotion} id="presets" title={copy.presetsTitle} icon={Sparkles}><p>{copy.presetsBody}</p><ol className="mt-5 space-y-3">{copy.aiSteps.map((item, index) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" /><span>{index + 1}. {item}</span></li>)}</ol></GuideSection>
-            <GuideSection reduceMotion={reduceMotion} id="queue" title={copy.queueTitle} icon={Download}><p>{copy.queueBody}</p><ul className="mt-5 space-y-3">{copy.queueTips.map((item) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-200" /><span>{item}</span></li>)}</ul></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="workflow" title={copy.workflowTitle} icon={Workflow}><div className="grid gap-3 sm:grid-cols-2">{copy.workflow.map(([number, title, body], index) => <RevealCard key={number} index={index} reduceMotion={reduceMotion}><div className="mb-3 grid h-7 w-7 place-items-center rounded-sm bg-[#00ff9d]/15 font-tech-mono text-xs font-bold text-[#00ff9d]">{number}</div><h3 className="mb-2 font-editorial text-lg font-bold uppercase text-white">{title}</h3><p>{body}</p></RevealCard>)}</div></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="engines" title={copy.enginesTitle} icon={Cpu}><div className="grid gap-4 sm:grid-cols-2">{copy.engines.map(([title, body], index) => <RevealCard key={title} index={index} reduceMotion={reduceMotion}><h3 className="mb-2 font-editorial text-lg font-bold uppercase text-white">{title}</h3><p>{body}</p></RevealCard>)}</div></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="presets" title={copy.presetsTitle} icon={Sparkles}><p>{copy.presetsBody}</p><ol className="mt-5 space-y-3">{copy.aiSteps.map((item, index) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#00ff9d]" /><span>{index + 1}. {item}</span></li>)}</ol></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="queue" title={copy.queueTitle} icon={Download}><p>{copy.queueBody}</p><ul className="mt-5 space-y-3">{copy.queueTips.map((item) => <li key={item} className="flex gap-3"><CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-[#00ff9d]" /><span>{item}</span></li>)}</ul></GuideSection>
             <GuideSection reduceMotion={reduceMotion} id="privacy" title={copy.privacyTitle} icon={LockKeyhole}><p>{copy.privacyBody}</p></GuideSection>
-            <GuideSection reduceMotion={reduceMotion} id="pwa" title={copy.installTitle} icon={Download}><p>{copy.installBody}</p><button onClick={installPwa} disabled={!installPrompt || isStandalone} className={`mt-5 inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold leading-none disabled:cursor-default ${installPrompt && !isStandalone ? 'bg-cyan-300 text-[#0b1020]' : 'border border-white/10 bg-white/5 text-slate-400 shadow-none'}`}><Download className="h-4 w-4" />{isStandalone ? copy.pwaInstalled : installPrompt ? copy.installPwa : copy.pwaUnavailable}</button></GuideSection>
-            <GuideSection reduceMotion={reduceMotion} id="troubleshooting" title={copy.troubleshootingTitle} icon={Settings2}><div className="space-y-3">{copy.troubleshooting.map(([title, body]) => <details key={title} className="group rounded-2xl border border-white/10 bg-[#111a30] p-4"><summary className="cursor-pointer list-none font-medium text-white">{title}<ChevronRight className="float-right h-4 w-4 text-slate-500 transition group-open:rotate-90" /></summary><p className="pt-3">{body}</p></details>)}</div></GuideSection>
-            <div className="mt-14 flex flex-col items-start justify-between gap-4 rounded-2xl border border-cyan-300/20 bg-cyan-300/5 p-6 sm:flex-row sm:items-center"><div><p className="text-sm text-slate-300">{copy.footer}</p></div><Link href="/" className="rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-[#0b1020]"><Play className="mr-2 inline h-4 w-4" />{copy.openStudio}</Link></div>
+            <GuideSection reduceMotion={reduceMotion} id="pwa" title={copy.installTitle} icon={Download}><p>{copy.installBody}</p><button onClick={installPwa} disabled={!installPrompt || isStandalone} className={`mt-5 inline-flex items-center justify-center gap-2 rounded-sm px-4 py-2.5 font-tech-mono text-xs font-bold uppercase leading-none disabled:cursor-default ${installPrompt && !isStandalone ? 'brutal-btn-primary' : 'border border-[#223029] bg-white/5 text-slate-400 shadow-none'}`}><Download className="h-4 w-4" />{isStandalone ? copy.pwaInstalled : installPrompt ? copy.installPwa : copy.pwaUnavailable}</button></GuideSection>
+            <GuideSection reduceMotion={reduceMotion} id="troubleshooting" title={copy.troubleshootingTitle} icon={Settings2}><div className="space-y-3">{copy.troubleshooting.map(([title, body]) => <details key={title} className="group rounded-sm border border-[#223029] bg-[#121815] p-4"><summary className="cursor-pointer list-none font-tech-mono text-xs font-bold text-white">{title}<ChevronRight className="float-right h-4 w-4 text-slate-500 transition group-open:rotate-90" /></summary><p className="pt-3 font-mono text-xs leading-relaxed text-slate-400">{body}</p></details>)}</div></GuideSection>
+            <div className="mt-14 flex flex-col items-start justify-between gap-4 rounded-sm border border-[#00ff9d]/30 bg-[#00ff9d]/5 p-6 sm:flex-row sm:items-center"><div><p className="font-tech-mono text-xs text-slate-300">{copy.footer}</p></div><Link href="/" className="brutal-btn-primary px-4 py-2.5 font-tech-mono text-xs"><Play className="mr-2 inline h-4 w-4" />{copy.openStudio}</Link></div>
           </motion.article>
         </AnimatePresence>
       </div>
-    </main>
+    </motion.main>
   );
 }
 
 function GuideSection({ id, title, icon: Icon, children }: { id: string; title: string; icon: React.ComponentType<{ className?: string }>; children: React.ReactNode; reduceMotion: boolean }) {
-  return <section id={id} className="scroll-mt-28 border-b border-white/10 py-10 first:pt-0"><div className="mb-5 flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-xl bg-cyan-300/10 text-cyan-200"><Icon className="h-4 w-4" /></div><h2 className="text-2xl font-semibold tracking-tight text-white">{title}</h2></div><div className="space-y-4 text-sm leading-7 text-slate-400">{children}</div></section>;
+  return <section id={id} className="scroll-mt-28 border-b border-[#223029] py-10 first:pt-0"><div className="mb-5 flex items-center gap-3"><div className="grid h-8 w-8 place-items-center rounded-sm bg-[#00ff9d]/10 text-[#00ff9d]"><Icon className="h-4 w-4" /></div><h2 className="font-editorial text-2xl font-bold uppercase tracking-wide text-white">{title}</h2></div><div className="space-y-4 font-mono text-xs leading-7 text-slate-400">{children}</div></section>;
 }
 
 function RevealCard({ children }: { children: React.ReactNode; index: number; reduceMotion: boolean }) {
-  return <div className="rounded-2xl border border-white/10 bg-[#111a30] p-5">{children}</div>;
+  return <div className="brutal-card p-5">{children}</div>;
 }

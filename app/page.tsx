@@ -19,18 +19,27 @@ import {
   type AIHistoryItem, type ConversionHistoryItem, type Preset, type PresetSettings,
 } from '../lib/preset-workspace';
 import { SettingsPanel } from '../components/settings-panel';
+import { TrimSlider } from '../components/trim-slider';
 import {
   QUEUE_RECOVERY_KEY, createTempNames, estimateOutputBytes, getPreflightIssues, recoverQueueSnapshot, validateFfmpegArgs,
   type RecoverableQueueJob,
 } from '../lib/conversion-reliability';
 import {
+  AUDIO_BITRATE_OPTIONS,
   AUDIO_CODEC_OPTIONS,
   FRAME_RATE_OPTIONS,
   OUTPUT_FORMAT_OPTIONS,
   RESOLUTION_OPTIONS,
   VIDEO_BITRATE_OPTIONS,
   VIDEO_CODEC_OPTIONS,
+  calculateBitrateForTargetSize,
+  getAudioBitrateRecommendation,
+  getCompatibleAudioCodecs,
+  getCompatibleVideoCodecs,
+  getVideoBitrateRecommendation,
   resolveFfmpegCodecArgs,
+  sanitizeCodecSettings,
+  type Resolution,
 } from '../lib/media-capabilities';
 
 const DEFAULT_PRESETS: Preset[] = [
@@ -223,11 +232,70 @@ export default function PresetStudio() {
   const [customFormat, setCustomFormat] = useState<PresetSettings['format']>(activePreset.settings.format);
   const [customVcodec, setCustomVcodec] = useState<PresetSettings['vcodec']>(activePreset.settings.vcodec);
   const [customAcodec, setCustomAcodec] = useState<PresetSettings['acodec']>(activePreset.settings.acodec);
+  const [customAbitrate, setCustomAbitrate] = useState<string>(activePreset.settings.abitrate || 'auto');
   const [customResolution, setCustomResolution] = useState<PresetSettings['resolution']>(activePreset.settings.resolution);
   const [customFps, setCustomFps] = useState(activePreset.settings.fps);
   const [customVbitrate, setCustomVbitrate] = useState(activePreset.settings.vbitrate);
   const [customAudioEnabled, setCustomAudioEnabled] = useState(activePreset.settings.audioEnabled);
+  const [customCrf, setCustomCrf] = useState<number>(23);
+  const [customTargetMB, setCustomTargetMB] = useState<number | ''>('');
   const [customArgs, setCustomArgs] = useState(activePreset.ffmpegArgs.join(' '));
+
+  const updateCustomParameterFlags = (
+    baseArgsString: string,
+    targetMB: number | '',
+    crf: number,
+    vbitrate: string,
+    resolution: Resolution,
+    fps: number,
+    abitrate: string = customAbitrate
+  ): string => {
+    let args = baseArgsString.split(/\s+/).filter(Boolean);
+    const cleaned: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '-fs' || args[i] === '-crf' || args[i] === '-r' || args[i] === '-b:v' || args[i] === '-vf' || args[i] === '-b:a') {
+        i++;
+        continue;
+      }
+      cleaned.push(args[i]);
+    }
+    args = cleaned;
+
+    if (resolution === '4k') args.push('-vf', 'scale=-2:2160');
+    else if (resolution === '1080p') args.push('-vf', 'scale=-2:1080');
+    else if (resolution === '720p') args.push('-vf', 'scale=-2:720');
+    else if (resolution === '480p') args.push('-vf', 'scale=-2:480');
+    else if (resolution === '360p') args.push('-vf', 'scale=-2:360');
+
+    if (fps > 0) {
+      args.push('-r', String(fps));
+    }
+
+    let calculatedKbps: number | null = null;
+    if (typeof targetMB === 'number' && targetMB > 0) {
+      const activeDuration = duration > 0 ? duration : 60;
+      const audioKbps = abitrate && abitrate !== 'auto' && abitrate !== 'none' ? Number(abitrate.replace('k', '')) || 128 : 128;
+      calculatedKbps = calculateBitrateForTargetSize(targetMB, activeDuration, audioKbps);
+    }
+
+    if (calculatedKbps) {
+      args.push('-b:v', `${calculatedKbps}k`);
+    } else if (vbitrate !== 'auto') {
+      args.push('-b:v', vbitrate);
+    } else {
+      args.push('-crf', String(crf));
+    }
+
+    if (abitrate && abitrate !== 'auto' && abitrate !== 'none') {
+      args.push('-b:a', abitrate);
+    }
+
+    if (typeof targetMB === 'number' && targetMB > 0) {
+      args.push('-fs', `${targetMB}M`);
+    }
+
+    return args.join(' ');
+  };
   const configuredPreset = useMemo<Preset>(() => ({
     ...activePreset,
     ffmpegArgs: customArgs.split(/\s+/).filter(Boolean),
@@ -246,6 +314,7 @@ export default function PresetStudio() {
   const updateVideoCodec = (vcodec: PresetSettings['vcodec']) => {
     setCustomVcodec(vcodec);
     setCustomArgs((current) => resolveFfmpegCodecArgs({
+      format: customFormat,
       vcodec,
       acodec: customAcodec,
       audioEnabled: customAudioEnabled,
@@ -255,6 +324,7 @@ export default function PresetStudio() {
   const updateAudioCodec = (acodec: PresetSettings['acodec']) => {
     setCustomAcodec(acodec);
     setCustomArgs((current) => resolveFfmpegCodecArgs({
+      format: customFormat,
       vcodec: customVcodec,
       acodec,
       audioEnabled: customAudioEnabled && acodec !== 'none',
@@ -266,6 +336,7 @@ export default function PresetStudio() {
     const audioEnabled = !customAudioEnabled;
     setCustomAudioEnabled(audioEnabled);
     setCustomArgs((current) => resolveFfmpegCodecArgs({
+      format: customFormat,
       vcodec: customVcodec,
       acodec: customAcodec,
       audioEnabled,
@@ -534,6 +605,7 @@ export default function PresetStudio() {
     setCustomFormat(preset.settings.format);
     setCustomVcodec(preset.settings.vcodec);
     setCustomAcodec(preset.settings.acodec);
+    setCustomAbitrate(preset.settings.abitrate || '128k');
     setCustomResolution(preset.settings.resolution);
     setCustomFps(preset.settings.fps);
     setCustomVbitrate(preset.settings.vbitrate);
@@ -632,10 +704,10 @@ export default function PresetStudio() {
   };
 
   const loadFFmpeg = async () => {
-    if (ffmpeg) return;
+    if (ffmpeg) return ffmpeg;
     setFfmpegLoading(true);
-    setConversionStage('loadingEngine');
     setFfmpegError('');
+    log('Loading FFmpeg.wasm compiler from CDN…');
     try {
       const [{ FFmpeg }, { toBlobURL }] = await Promise.all([import('@ffmpeg/ffmpeg'), import('@ffmpeg/util')]);
       const instance = new FFmpeg();
@@ -647,9 +719,11 @@ export default function PresetStudio() {
       setConversionStage('preparing');
       log('FFmpeg.wasm compiler loaded from CDN.');
       setToast(t('compilerLoaded'));
+      return instance;
     } catch (error: any) {
       setFfmpegError(error?.message || 'Unable to load FFmpeg.');
       log(`FFmpeg error: ${error?.message || 'unknown error'}`);
+      return null;
     } finally {
       setFfmpegLoading(false);
     }
@@ -743,19 +817,26 @@ export default function PresetStudio() {
     try {
       setConversionStage('preparing');
       if (engine === 'ffmpeg') {
-        if (!ffmpeg) throw new Error('Load FFmpeg.wasm first.');
+        let activeFfmpeg = ffmpeg;
+        if (!activeFfmpeg) {
+          activeFfmpeg = await loadFFmpeg();
+        }
+        if (!activeFfmpeg) throw new Error('FFmpeg compiler could not be loaded.');
         const { fetchFile } = await import('@ffmpeg/util');
         const names = createTempNames(workingFile.name, jobSettings.format, jobId || uniqueId('single'));
         const inputName = names.inputName;
         const output = names.outputName;
         temporaryFiles.push(inputName, output);
-        await ffmpeg.writeFile(inputName, await fetchFile(workingFile));
+        await activeFfmpeg.writeFile(inputName, await fetchFile(workingFile));
         const encodingArgs = resolveFfmpegCodecArgs(jobSettings, jobPreset.ffmpegArgs);
         const args = ['-ss', jobTrimStart.toFixed(3), '-to', jobTrimEnd.toFixed(3), '-i', inputName, ...encodingArgs, output];
         setConversionStage('encoding');
-        await ffmpeg.exec(args);
+        const exitCode = await activeFfmpeg.exec(args);
+        if (exitCode !== 0) {
+          throw new Error(`FFmpeg exited with code ${exitCode}. Check output format or parameters.`);
+        }
         setConversionStage('finalizing');
-        const data = await ffmpeg.readFile(output);
+        const data = await activeFfmpeg.readFile(output);
         const blob = new Blob([data], { type: getMimeType(jobSettings.format) });
         const resultUrl = URL.createObjectURL(blob);
         setOutputUrl(resultUrl);
@@ -827,7 +908,7 @@ export default function PresetStudio() {
   };
 
   const handleTranscode = async () => {
-    if (!selectedFile || !videoRef.current) return;
+    if (!selectedFile) return;
     const jobs: QueueJob[] = queue.length ? queue : [{
       id: uniqueId('job'),
       file: selectedFile,
@@ -980,52 +1061,79 @@ export default function PresetStudio() {
   const steps = [t('importStep'), t('presetStep'), t('adjustStep'), t('exportStep')];
 
   return (
-    <main id="main-content" tabIndex={-1} aria-busy={transcoding} className="app-shell relative min-h-screen overflow-hidden bg-transparent text-slate-100">
+    <motion.main
+      initial={reduceMotion ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+      id="main-content"
+      tabIndex={-1}
+      aria-busy={transcoding}
+      className="app-shell relative min-h-screen overflow-hidden bg-transparent text-slate-100"
+    >
       <a href="#studio-content" className="sr-only z-50 rounded-lg bg-cyan-300 px-4 py-2 font-semibold text-[#0b1020] focus:not-sr-only focus:fixed focus:left-4 focus:top-4">{t('skipToContent')}</a>
       <div aria-hidden="true" className="app-aurora app-aurora-one pointer-events-none absolute rounded-full" />
       <div aria-hidden="true" className="app-aurora app-aurora-two pointer-events-none absolute rounded-full" />
       <div className="app-container mx-auto max-w-[1440px] px-4 py-4 sm:px-6 lg:px-8">
-        <header className="app-header sticky top-3 z-20 mb-7 flex items-center justify-between rounded-2xl border border-white/10 bg-[#111a30]/90 px-4 py-3 shadow-2xl shadow-black/20 backdrop-blur-xl">
+        <header className="app-header sticky top-3 z-20 mb-7 flex items-center justify-between rounded-sm border border-[#223029] bg-[#121815]/95 px-4 py-3 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <div className="app-brand flex items-center gap-3">
             <Image src="/logo-mark.svg" alt="" width={40} height={40} priority className="app-logo h-10 w-10 rounded-xl" />
             <div>
-              <div className="font-semibold tracking-tight text-white">{t('appName')}</div>
-              <div className="hidden text-xs text-slate-400 sm:block">{t('appTagline')}</div>
+              <div className="font-editorial text-xl font-bold tracking-wider text-white uppercase">{t('appName')}</div>
+              <div className="hidden text-xs font-tech-mono text-[#8a9e95] sm:block">{t('appTagline')}</div>
             </div>
           </div>
-          <nav className="app-nav hidden items-center gap-1 md:flex" aria-label="Primary">
-            <span aria-current="page" className="rounded-lg bg-white/10 px-3 py-2 text-sm text-white">{t('studio')}</span>
-            <Link href="/guide" className="rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-white/5 hover:text-white"><CircleHelp className="mr-1.5 inline h-4 w-4" />{t('guide')}</Link>
+          <nav className="app-nav hidden items-center gap-2 md:flex" aria-label="Primary">
+            <span aria-current="page" className="brutal-badge bg-[#00ff9d]/10 text-[#00ff9d] border-[#00ff9d]/40">{t('studio')}</span>
+            <Link href="/guide" className="brutal-badge text-[#8a9e95] hover:text-white hover:border-[#00ff9d]/40"><CircleHelp className="mr-1 inline h-3.5 w-3.5" />{t('guide')}</Link>
           </nav>
           <div className="app-actions flex items-center gap-2">
-            <div role="group" className="hidden items-center rounded-lg border border-white/10 bg-black/20 p-0.5 sm:flex" aria-label={t('language')}>
-              {(['en', 'id'] as Locale[]).map((item) => <button key={item} aria-pressed={locale === item} onClick={() => updateSettings({ locale: item })} className={`min-h-11 min-w-11 rounded-md px-2 py-1 text-xs font-semibold ${locale === item ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}>{item.toUpperCase()}</button>)}
+            <div role="group" className="hidden items-center rounded-sm border border-[#223029] bg-[#0d1310] p-0.5 sm:flex" aria-label={t('language')}>
+              {(['en', 'id'] as Locale[]).map((item) => <button key={item} aria-pressed={locale === item} onClick={() => updateSettings({ locale: item })} className={`min-h-9 min-w-9 rounded-sm px-2 py-1 text-xs font-tech-mono font-bold ${locale === item ? 'bg-[#00ff9d] text-[#0a0e0c]' : 'text-[#8a9e95]'}`}>{item.toUpperCase()}</button>)}
             </div>
-            {!isStandalone && installPrompt && <button onClick={installApp} className="hidden items-center justify-center gap-2 rounded-xl border border-cyan-300/25 px-3 py-2.5 text-xs font-semibold leading-none text-cyan-100 hover:bg-cyan-300/10 sm:inline-flex"><Download className="h-4 w-4 shrink-0" />{t('installApp')}</button>}
-            <button onClick={() => setPanel('settings')} aria-label={t('settings')} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-300 transition hover:border-cyan-300/50 hover:text-white"><Settings2 className="h-5 w-5" /></button>
-            <Link href="/guide" className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-300 md:hidden" aria-label={t('guide')}><Menu className="h-5 w-5" /></Link>
+            {!isStandalone && installPrompt && <button onClick={installApp} className="hidden items-center justify-center gap-2 rounded-sm border border-[#00ff9d]/40 px-3 py-2 text-xs font-tech-mono text-[#00ff9d] hover:bg-[#00ff9d]/10 sm:inline-flex"><Download className="h-4 w-4 shrink-0" />{t('installApp')}</button>}
+            <button onClick={() => setPanel('settings')} aria-label={t('settings')} className="grid min-h-10 min-w-10 place-items-center rounded-sm border border-[#223029] text-slate-300 transition hover:border-[#00ff9d]/50 hover:text-[#00ff9d]"><Settings2 className="h-4 w-4" /></button>
+            <Link href="/guide" className="grid min-h-10 min-w-10 place-items-center rounded-sm border border-[#223029] text-slate-300 md:hidden" aria-label={t('guide')}><Menu className="h-4 w-4" /></Link>
           </div>
         </header>
 
         <AnimatePresence>
-        {!isStandalone && installPrompt && <motion.section {...collapseProps} className="mb-5 overflow-hidden rounded-2xl border border-cyan-300/20 bg-cyan-300/5 sm:hidden">
+        {!isStandalone && installPrompt && <motion.section {...collapseProps} className="mb-5 overflow-hidden rounded-sm border border-[#00ff9d]/30 bg-[#00ff9d]/5 sm:hidden">
           <div className="flex flex-col gap-3 p-4">
-          <div><div className="text-sm font-semibold text-white">{t('installApp')}</div><p className="mt-1 text-xs leading-5 text-slate-400">{t('installAppBody')}</p></div>
-          <button onClick={installApp} className="rounded-xl bg-cyan-300 px-4 py-2.5 text-xs font-semibold text-[#0b1020]"><Download className="mr-1.5 inline h-4 w-4" />{t('installApp')}</button>
+          <div><div className="text-sm font-bold font-editorial text-white">{t('installApp')}</div><p className="mt-1 text-xs font-tech-mono leading-5 text-slate-400">{t('installAppBody')}</p></div>
+          <button onClick={installApp} className="brutal-btn-primary px-4 py-2.5 text-xs"><Download className="mr-1.5 inline h-4 w-4" />{t('installApp')}</button>
           </div>
         </motion.section>}
         </AnimatePresence>
 
         <section className="workspace-layout mb-7 grid gap-5 lg:grid-cols-[220px_1fr]">
-          <aside className="workflow-rail hidden rounded-2xl border border-white/10 bg-[#111a30] p-3 lg:block">
-            <div className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('workflow')}</div>
+          <aside className="workflow-rail hidden rounded-sm border border-[#223029] bg-[#121815] p-3 lg:block">
+            <div className="mb-3 px-3 text-[11px] font-tech-mono uppercase tracking-[0.2em] text-[#8a9e95]">{t('workflow')}</div>
             <div className="space-y-1">
-              {steps.map((label, index) => <button key={label} aria-current={step === index ? 'step' : undefined} onClick={() => index <= step && setStep(index)} className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm transition ${step === index ? 'text-[#0b1020]' : index < step ? 'text-cyan-200 hover:bg-white/5' : 'text-slate-500'}`}>{step === index && <motion.span layoutId="active-workflow-step" className="absolute inset-0 rounded-xl bg-cyan-300" transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'easeOut' }} />}<span className={`relative grid h-7 w-7 place-items-center rounded-full text-xs font-bold ${step === index ? 'bg-[#0b1020] text-cyan-200' : index < step ? 'bg-cyan-300/15 text-cyan-200' : 'bg-white/5'}`}>{index < step ? <Check className="h-4 w-4" /> : index + 1}</span><span className="relative">{label}</span></button>)}
+              {steps.map((label, index) => <button key={label} aria-current={step === index ? 'step' : undefined} onClick={() => index <= step && setStep(index)} className={`relative flex w-full items-center gap-3 rounded-sm px-3 py-3 text-left text-xs font-tech-mono transition ${step === index ? 'text-[#0a0e0c] font-bold' : index < step ? 'text-[#00ff9d] hover:bg-white/5' : 'text-slate-500'}`}>{step === index && <motion.span layoutId="active-workflow-step" className="absolute inset-0 rounded-sm bg-[#00ff9d]" transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'easeOut' }} />}<span className={`relative grid h-6 w-6 place-items-center rounded-sm text-xs font-bold ${step === index ? 'bg-[#0a0e0c] text-[#00ff9d]' : index < step ? 'bg-[#00ff9d]/20 text-[#00ff9d]' : 'bg-white/5'}`}>{index < step ? <Check className="h-3.5 w-3.5" /> : index + 1}</span><span className="relative">{label}</span></button>)}
             </div>
-            <div className="mt-8 rounded-xl border border-cyan-300/10 bg-cyan-300/5 p-3 text-xs text-slate-400"><ShieldCheck className="mb-2 h-4 w-4 text-cyan-200" /><p>{t('guidePrivacyBody')}</p></div>
+            <div className="mt-8 rounded-sm border border-[#00ff9d]/30 bg-[#00ff9d]/5 p-3.5">
+              <div className="mb-1.5 flex items-center gap-1.5 font-tech-mono text-[11px] font-bold text-[#00ff9d]">
+                <ShieldCheck className="h-4 w-4 shrink-0" />
+                <span>PRIVACY GUARANTEE</span>
+              </div>
+              <p className="font-sans text-xs leading-relaxed text-slate-300">{t('guidePrivacyBody')}</p>
+            </div>
           </aside>
 
           <div id="studio-content" className="studio-stage">
+            {fileUrl && (
+              <div aria-hidden="true" className="sr-only pointer-events-none hidden">
+                <video
+                  ref={videoRef}
+                  src={fileUrl}
+                  onLoadedMetadata={handleMetadata}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  preload="metadata"
+                />
+                <canvas ref={canvasRef} />
+              </div>
+            )}
             <div className="stage-heading mb-5 flex items-end justify-between">
               <div><p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">{steps[step]}</p><h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">{step === 0 ? t('importTitle') : step === 1 ? t('choosePreset') : step === 2 ? t('tuneTitle') : t('exportTitle')}</h1></div>
               <div className="shrink-0 whitespace-nowrap text-right text-xs text-slate-500"><span className="text-slate-300">{step + 1}</span> / {steps.length}</div>
@@ -1082,64 +1190,84 @@ export default function PresetStudio() {
                         <FolderOpen className="h-4 w-4" />{t('chooseFile')}
                       </button>
                     </div>
-                  ) : <div className="media-preview overflow-hidden rounded-3xl border border-white/10 bg-[#111a30]"><div className="relative aspect-video bg-black"><video ref={videoRef} src={fileUrl} controls className="h-full w-full object-contain" onLoadedMetadata={handleMetadata} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} /><canvas ref={canvasRef} className="hidden" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="truncate text-sm font-medium text-white">{selectedFile.name}</div><div className="text-xs text-slate-500">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedJobId(null); setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="min-h-11 rounded-lg px-3 py-2 text-xs text-rose-300 hover:bg-rose-300/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
+                  ) : <div className="media-preview overflow-hidden rounded-sm border border-[#223029] bg-[#121815]"><div className="relative aspect-video bg-black"><video src={fileUrl} controls className="h-full w-full object-contain" /></div><div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#223029] p-4"><div className="flex min-w-0 items-center gap-3"><FileVideo className="h-5 w-5 shrink-0 text-[#00ff9d]" /><div className="min-w-0"><div className="truncate text-xs font-tech-mono font-bold text-white">{selectedFile.name}</div><div className="text-xs font-tech-mono text-[#8a9e95]">{formatBytes(selectedFile.size)} · {duration.toFixed(1)}s</div></div></div><button onClick={() => { setSelectedJobId(null); setSelectedFile(null); setFileUrl(''); setQueue([]); }} className="min-h-9 rounded-sm border border-[#ff4757]/30 px-3 py-1.5 font-tech-mono text-xs text-[#ff4757] hover:bg-[#ff4757]/10"><Trash2 className="mr-1 inline h-3.5 w-3.5" />{t('remove')}</button></div></div>}
                   {recoveredJobs.length > 0 && <div className="rounded-2xl border border-amber-300/20 bg-amber-300/5 p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><div className="flex items-center gap-2 text-sm font-semibold text-amber-100"><AlertCircle className="h-4 w-4" />{t('interruptedQueue')}</div><p className="mt-1 text-xs text-slate-400">{t('interruptedQueueBody')} ({recoveredJobs.map((job) => job.fileName).join(', ')})</p></div><div className="flex gap-2"><button onClick={() => fileInputRef.current?.click()} className="rounded-lg bg-amber-200 px-3 py-2 text-xs font-semibold text-[#0b1020]">{t('chooseFilesAgain')}</button><button onClick={() => { setRecoveredJobs([]); localStorage.removeItem(QUEUE_RECOVERY_KEY); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300">{t('dismiss')}</button></div></div></div>}
-                  {queue.length > 0 && <div className="queue-panel rounded-2xl border border-white/10 bg-[#111a30] p-4">
+                  {queue.length > 0 && <div className="queue-panel rounded-sm border border-[#223029] bg-[#121815] p-4">
                     <div className="queue-panel-head mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm font-semibold text-white">{t('queue')} <span className="text-xs font-normal text-slate-500">({queue.length})</span></div>
-                      <div className="flex flex-wrap gap-2">
-                        {queue.some((job) => job.status === 'completed') && <button onClick={clearCompletedJobs} className="min-h-11 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5">{t('clearCompleted')}</button>}
+                      <div className="text-xs font-tech-mono font-bold text-white uppercase">{t('queue')} <span className="text-xs font-normal text-slate-500">({queue.length})</span></div>
+                      <div className="flex flex-wrap gap-2 font-tech-mono">
+                        {queue.some((job) => job.status === 'completed') && <button onClick={clearCompletedJobs} className="min-h-9 rounded-sm border border-[#223029] px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5">{t('clearCompleted')}</button>}
                         {transcoding ? <>
-                          <button onClick={toggleQueuePause} className="min-h-11 rounded-lg border border-amber-300/20 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-300/10">{queuePaused ? <Play className="mr-1 inline h-3.5 w-3.5" /> : <Pause className="mr-1 inline h-3.5 w-3.5" />}{queuePaused ? t('resumeQueue') : t('pauseQueue')}</button>
-                          <button onClick={cancelQueue} className="min-h-11 rounded-lg border border-rose-300/20 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-300/10"><X className="mr-1 inline h-3.5 w-3.5" />{t('cancelQueue')}</button>
-                        </> : <button onClick={() => fileInputRef.current?.click()} className="min-h-11 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
+                          <button onClick={toggleQueuePause} className="min-h-9 rounded-sm border border-amber-300/20 px-3 py-1.5 text-xs text-amber-100 hover:bg-amber-300/10">{queuePaused ? <Play className="mr-1 inline h-3.5 w-3.5" /> : <Pause className="mr-1 inline h-3.5 w-3.5" />}{queuePaused ? t('resumeQueue') : t('pauseQueue')}</button>
+                          <button onClick={cancelQueue} className="min-h-9 rounded-sm border border-rose-300/20 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-300/10"><X className="mr-1 inline h-3.5 w-3.5" />{t('cancelQueue')}</button>
+                        </> : <button onClick={() => fileInputRef.current?.click()} className="min-h-9 rounded-sm border border-[#223029] px-3 py-1.5 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('addMore')}</button>}
                       </div>
                     </div>
                     <div aria-live="polite" aria-busy={transcoding} className="space-y-2">
                       <AnimatePresence initial={false}>
-                      {queue.map((job, index) => <motion.div key={job.id} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0, height: 0, marginBottom: 0 }, transition: { duration: .14, ease: 'easeOut' } })} className={`queue-item overflow-hidden rounded-xl border p-3 transition ${selectedJobId === job.id ? 'is-selected border-cyan-300/30 bg-cyan-300/5' : 'border-white/5 bg-black/15'}`}>
+                      {queue.map((job, index) => <motion.div key={job.id} {...(reduceMotion ? { initial: false } : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0, height: 0, marginBottom: 0 }, transition: { duration: .14, ease: 'easeOut' } })} className={`queue-item overflow-hidden rounded-sm border p-3 transition ${selectedJobId === job.id ? 'is-selected border-[#00ff9d]/50 bg-[#00ff9d]/10' : 'border-[#223029] bg-[#060908]'}`}>
                         <div className="queue-item-head flex items-start gap-3">
                           <button onClick={() => selectQueueJob(job)} className="queue-file flex min-h-11 min-w-0 flex-1 items-center gap-3 text-left">
-                            <span className="queue-file-icon grid shrink-0 place-items-center"><FileVideo className="h-4 w-4" /></span>
-                            <span className="min-w-0"><span className="block truncate text-xs font-medium text-white">{job.file.name}</span>
-                            <span className="mt-1 block text-[11px] text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</span></span>
+                            <span className="queue-file-icon grid shrink-0 place-items-center"><FileVideo className="h-4 w-4 text-[#00ff9d]" /></span>
+                            <span className="min-w-0"><span className="block truncate text-xs font-tech-mono font-bold text-white">{job.file.name}</span>
+                            <span className="mt-1 block text-[11px] font-tech-mono text-slate-500">{job.status === 'failed' ? job.error : t(job.status as TranslationKey)}{job.status === 'processing' && ` · ${progress}%`}</span></span>
                           </button>
                           <div className="flex shrink-0 items-center gap-1">
-                            <button disabled={transcoding || index === 0} onClick={() => moveJob(job.id, -1)} aria-label={t('moveUp')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-3.5 w-3.5" /></button>
-                            <button disabled={transcoding || index === queue.length - 1} onClick={() => moveJob(job.id, 1)} aria-label={t('moveDown')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-3.5 w-3.5" /></button>
-                            {job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}
-                            {job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-emerald-200 hover:bg-emerald-300/10"><Download className="h-3.5 w-3.5" /></a>}
-                            {job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="grid min-h-11 min-w-11 place-items-center rounded-md text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}
+                            <button disabled={transcoding || index === 0} onClick={() => moveJob(job.id, -1)} aria-label={t('moveUp')} className="grid min-h-9 min-w-9 place-items-center rounded-sm text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowUp className="h-3.5 w-3.5" /></button>
+                            <button disabled={transcoding || index === queue.length - 1} onClick={() => moveJob(job.id, 1)} aria-label={t('moveDown')} className="grid min-h-9 min-w-9 place-items-center rounded-sm text-slate-400 hover:bg-white/10 hover:text-white disabled:opacity-25"><ArrowDown className="h-3.5 w-3.5" /></button>
+                            {job.status === 'failed' && <button onClick={() => retryJob(job)} aria-label={t('retry')} className="grid min-h-9 min-w-9 place-items-center rounded-sm text-amber-200 hover:bg-amber-300/10"><RotateCcw className="h-3.5 w-3.5" /></button>}
+                            {job.status === 'completed' && job.outputUrl && <a href={job.outputUrl} download={job.outputName} aria-label={t('download')} className="grid min-h-9 min-w-9 place-items-center rounded-sm text-[#00ff9d] hover:bg-[#00ff9d]/10"><Download className="h-3.5 w-3.5" /></a>}
+                            {job.status !== 'processing' && <button onClick={() => removeJob(job)} aria-label={t('remove')} className="grid min-h-9 min-w-9 place-items-center rounded-sm text-slate-500 hover:bg-rose-300/10 hover:text-rose-200"><Trash2 className="h-3.5 w-3.5" /></button>}
                           </div>
                         </div>
-                        <div className={`queue-item-settings mt-3 border-t border-white/5 pt-3 ${queue.length > 1 ? 'grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end' : 'flex justify-end'}`}>
-                          {queue.length > 1 && <details className="smooth-details rounded-lg border border-white/10 bg-black/15 px-3 py-2">
-                            <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 text-xs text-slate-300">
+                        <div className={`queue-item-settings mt-3 border-t border-[#223029] pt-3 ${queue.length > 1 ? 'grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end' : 'flex justify-end'}`}>
+                          {queue.length > 1 && <details className="smooth-details rounded-sm border border-[#223029] bg-[#121815] px-3 py-2">
+                            <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 text-xs font-tech-mono text-slate-300">
                               <span>{t('overridePreset')}</span>
                               <span className="flex min-w-0 items-center gap-2 text-slate-500"><span className="max-w-44 truncate">{job.preset.name}</span><ChevronDown className="h-3.5 w-3.5 shrink-0" /></span>
                             </summary>
-                            <div className="mt-2 border-t border-white/5 pt-2">
-                              <select aria-label={t('overridePreset')} value={job.preset.id} disabled={transcoding || job.status === 'processing'} onChange={(event) => updateJobPreset(job, event.target.value)} className="block w-full rounded-lg border border-white/10 bg-[#0b1020] px-2.5 py-2 text-xs text-slate-200 outline-none focus:border-cyan-300/60 disabled:opacity-50">
+                            <div className="mt-2 border-t border-[#223029] pt-2">
+                              <select aria-label={t('overridePreset')} value={job.preset.id} disabled={transcoding || job.status === 'processing'} onChange={(event) => updateJobPreset(job, event.target.value)} className="block w-full rounded-sm border border-[#223029] bg-[#060908] px-2.5 py-2 text-xs font-tech-mono text-slate-200 outline-none focus:border-[#00ff9d]/60 disabled:opacity-50">
                                 {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
                               </select>
-                              {job.presetOverridden && <button type="button" onClick={() => clearJobPresetOverride(job)} className="mt-2 text-[11px] text-cyan-200 hover:text-cyan-100">{t('useBatchPreset')}</button>}
+                              {job.presetOverridden && <button type="button" onClick={() => clearJobPresetOverride(job)} className="mt-2 text-[11px] font-tech-mono text-[#00ff9d] hover:underline">{t('useBatchPreset')}</button>}
                             </div>
                           </details>}
-                          <div className="text-[11px] text-slate-500">{t('estimatedOutput')}: <span className="text-slate-300">{getJobEstimate(job)}</span></div>
+                          <div className="text-[11px] font-tech-mono text-slate-500">{t('estimatedOutput')}: <span className="text-slate-300">{getJobEstimate(job)}</span></div>
                         </div>
                       </motion.div>)}
                       </AnimatePresence>
                     </div>
                   </div>}
-                  {selectedFile && <div className="trim-panel rounded-2xl border border-white/10 bg-[#111a30] p-5"><div className="trim-panel-head mb-4 flex items-center justify-between"><div className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-cyan-200" />{t('trim')}</div><span className="trim-readout rounded-full bg-cyan-300/10 px-3 py-1 text-xs text-cyan-100">{trimStart.toFixed(1)}s – {(trimEnd || duration).toFixed(1)}s</span></div><div className="trim-controls grid gap-4 sm:grid-cols-2"><label className="text-xs text-slate-400"><span>{t('start')}</span><strong>{trimStart.toFixed(1)}s</strong><input aria-label={t('start')} type="range" min="0" max={duration || 1} step="0.1" value={trimStart} onChange={(event) => { const value = Math.min(Number(event.target.value), Math.max(0, (trimEnd || duration) - 0.1)); setTrimStart(value); if (selectedJobId) setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, trimStart: value } : job)); }} className="mt-3 w-full accent-cyan-300" /></label><label className="text-xs text-slate-400"><span>{t('end')}</span><strong>{(trimEnd || duration).toFixed(1)}s</strong><input aria-label={t('end')} type="range" min="0" max={duration || 1} step="0.1" value={trimEnd || duration} onChange={(event) => { const value = Math.max(Number(event.target.value), trimStart + 0.1); setTrimEnd(value); if (selectedJobId) setQueue((current) => current.map((job) => job.id === selectedJobId ? { ...job, trimEnd: value } : job)); }} className="mt-3 w-full accent-indigo-400" /></label></div></div>}
-                  <div className="flex items-center justify-end gap-3">
+                  {selectedFile && (
+                    <TrimSlider
+                      duration={duration}
+                      trimStart={trimStart}
+                      trimEnd={trimEnd}
+                      onChange={(start, end) => {
+                        setTrimStart(start);
+                        setTrimEnd(end);
+                        if (selectedJobId) {
+                          setQueue((current) =>
+                            current.map((job) => (job.id === selectedJobId ? { ...job, trimStart: start, trimEnd: end } : job))
+                          );
+                        }
+                      }}
+                      labels={{
+                        trim: t('trim').toUpperCase(),
+                        start: t('start'),
+                        end: t('end'),
+                      }}
+                    />
+                  )}
+                  <div className="flex items-center justify-end gap-3 font-tech-mono">
                     {!selectedFile && <span className="text-xs text-slate-400">{t('chooseFileFirst')}</span>}
-                    <button disabled={!selectedFile} onClick={selectAndContinue} className="min-h-11 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] transition hover:bg-cyan-200 disabled:opacity-40">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button>
+                    <button disabled={!selectedFile} onClick={selectAndContinue} className="brutal-btn-primary min-h-11 rounded-sm px-5 py-3 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">{t('continue')}<ArrowRight className="ml-2 inline h-4 w-4" /></button>
                   </div>
                 </section>}
 
                 {step === 1 && <section className="space-y-5">
-                  <div className="preset-toolbar rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPresets')} className="w-full rounded-xl border border-white/10 bg-black/20 py-2.5 pl-10 pr-4 text-sm text-white outline-none focus:border-cyan-300/60" /></div><div className="preset-filters flex gap-1 overflow-x-auto">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium ${category === item ? 'bg-cyan-300 text-[#0b1020]' : 'bg-white/5 text-slate-400 hover:text-white'}`}>{t(categoryKey[item])}</button>)}</div></div><div className="preset-actions mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3"><button onClick={exportPresets} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Download className="mr-1 inline h-3.5 w-3.5" />{t('exportPresets')}</button><button onClick={() => presetImportRef.current?.click()} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('importPresets')}</button><input ref={presetImportRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { importPresets(event.target.files?.[0]); event.currentTarget.value = ''; }} /><button onClick={() => setShowHistory((value) => !value)} className={`rounded-lg border px-3 py-2 text-xs ${showHistory ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 text-slate-300 hover:bg-white/5'}`}><History className="mr-1 inline h-3.5 w-3.5" />{t('aiHistory')} ({aiHistory.length})</button></div></div>
+                  <div className="preset-toolbar rounded-sm border border-[#223029] bg-[#121815] p-4"><div className="flex flex-col gap-3 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPresets')} className="w-full rounded-sm border border-[#223029] bg-[#060908] py-2.5 pl-10 pr-4 text-xs font-tech-mono text-white outline-none focus:border-[#00ff9d]/60" /></div><div className="preset-filters flex gap-1 overflow-x-auto">{categories.map((item) => <button key={item} onClick={() => setCategory(item)} className={`whitespace-nowrap rounded-sm px-3 py-2 text-xs font-tech-mono ${category === item ? 'bg-[#00ff9d] text-[#0a0e0c] font-bold' : 'bg-white/5 text-[#8a9e95] hover:text-white'}`}>{t(categoryKey[item])}</button>)}</div></div><div className="preset-actions mt-3 flex flex-wrap gap-2 border-t border-[#223029] pt-3 font-tech-mono"><button onClick={exportPresets} className="rounded-sm border border-[#223029] px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Download className="mr-1 inline h-3.5 w-3.5" />{t('exportPresets')}</button><button onClick={() => presetImportRef.current?.click()} className="rounded-sm border border-[#223029] px-3 py-2 text-xs text-slate-300 hover:bg-white/5"><Upload className="mr-1 inline h-3.5 w-3.5" />{t('importPresets')}</button><input ref={presetImportRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { importPresets(event.target.files?.[0]); event.currentTarget.value = ''; }} /><button onClick={() => setShowHistory((value) => !value)} className={`rounded-sm border px-3 py-2 text-xs ${showHistory ? 'border-[#00ff9d]/40 bg-[#00ff9d]/10 text-[#00ff9d]' : 'border-[#223029] text-slate-300 hover:bg-white/5'}`}><History className="mr-1 inline h-3.5 w-3.5" />{t('aiHistory')} ({aiHistory.length})</button></div></div>
                   <div className="flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold text-white">{showingRecommended ? t('recommendedPresets') : t('presetLibrary')}</h2>
                     <span className="text-xs text-slate-400">{visiblePresets.length} / {filteredPresets.length}</span>
@@ -1215,47 +1343,198 @@ export default function PresetStudio() {
                       </div>
                     </div>
                   </section>
-                  <div className="settings-grid grid gap-4 rounded-2xl border border-white/10 bg-[#111a30] p-5 sm:grid-cols-2">
-                    <Field label={t('format')}><select disabled={nativeMode} value={nativeMode && !nativeSourceUnsupported ? 'webm' : customFormat} onChange={(event) => setCustomFormat(event.target.value as PresetSettings['format'])}>{OUTPUT_FORMAT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
-                    <Field label={t('videoCodec')}><select disabled={nativeMode} value={nativeMode && !nativeSourceUnsupported ? 'vp9' : customVcodec} onChange={(event) => updateVideoCodec(event.target.value as PresetSettings['vcodec'])}>{VIDEO_CODEC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
-                    <Field label={t('resolution')}><select value={customResolution} onChange={(event) => setCustomResolution(event.target.value as PresetSettings['resolution'])}>{RESOLUTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
-                    <Field label={t('frameRate')}><select value={customFps} onChange={(event) => setCustomFps(Number(event.target.value))}>{FRAME_RATE_OPTIONS.map((fps) => <option key={fps} value={fps}>{fps} FPS</option>)}</select></Field>
-                    <Field label={t('bitrate')}><select value={customVbitrate} onChange={(event) => setCustomVbitrate(event.target.value)}>{VIDEO_BITRATE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
-                    <Field label={t('audioCodec')}><select disabled={nativeMode || !customAudioEnabled} value={customAudioEnabled ? customAcodec : 'none'} onChange={(event) => updateAudioCodec(event.target.value as PresetSettings['acodec'])}>{AUDIO_CODEC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+                  <div className="settings-grid grid gap-4 rounded-sm border border-[#223029] bg-[#121815] p-5 sm:grid-cols-2">
+                    <Field label={t('format')}>
+                      <select
+                        disabled={nativeMode}
+                        value={nativeMode && !nativeSourceUnsupported ? 'webm' : customFormat}
+                        onChange={(event) => {
+                          const nextFormat = event.target.value as PresetSettings['format'];
+                          const sanitized = sanitizeCodecSettings(nextFormat, customVcodec, customAcodec);
+                          setCustomFormat(nextFormat);
+                          setCustomVcodec(sanitized.vcodec);
+                          setCustomAcodec(sanitized.acodec);
+                          setCustomArgs((current) => resolveFfmpegCodecArgs({
+                            format: nextFormat,
+                            vcodec: sanitized.vcodec,
+                            acodec: sanitized.acodec,
+                            audioEnabled: customAudioEnabled && sanitized.acodec !== 'none',
+                          }, current.split(/\s+/).filter(Boolean)).join(' '));
+                        }}
+                      >
+                        {OUTPUT_FORMAT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label={t('videoCodec')}>
+                      <select
+                        disabled={nativeMode}
+                        value={nativeMode && !nativeSourceUnsupported ? 'vp9' : customVcodec}
+                        onChange={(event) => updateVideoCodec(event.target.value as PresetSettings['vcodec'])}
+                      >
+                        {VIDEO_CODEC_OPTIONS.filter((opt) => getCompatibleVideoCodecs(customFormat).includes(opt.value)).map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={t('resolution')}><select value={customResolution} onChange={(event) => { const res = event.target.value as PresetSettings['resolution']; setCustomResolution(res); setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, res, customFps)); }}>{RESOLUTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
+                    <Field label={t('frameRate')}><select value={customFps} onChange={(event) => { const fps = Number(event.target.value); setCustomFps(fps); setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, customResolution, fps)); }}>{FRAME_RATE_OPTIONS.map((fps) => <option key={fps} value={fps}>{fps === 0 ? t('originalFpsLabel') : `${fps} FPS`}</option>)}</select></Field>
+                    <Field label={t('bitrate')}>
+                      <select
+                        disabled={customTargetMB !== ''}
+                        value={customTargetMB !== '' ? 'auto' : customVbitrate}
+                        onChange={(event) => {
+                          const vb = event.target.value;
+                          setCustomVbitrate(vb);
+                          setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, vb, customResolution, customFps));
+                        }}
+                      >
+                        {VIDEO_BITRATE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block font-tech-mono text-[11px] text-[#00ff9d]">
+                        {customTargetMB !== ''
+                          ? `Overridden by Target Size (${customTargetMB} MB)`
+                          : getVideoBitrateRecommendation(customResolution, customVcodec)}
+                      </span>
+                    </Field>
+                    <Field label={t('targetFileSize')}>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          max="2000"
+                          placeholder="e.g. 25 MB (leave empty to disable)"
+                          value={customTargetMB}
+                          onChange={(event) => {
+                            const val = event.target.value === '' ? '' : Math.max(1, Number(event.target.value));
+                            setCustomTargetMB(val);
+                            setCustomArgs((current) => updateCustomParameterFlags(current, val, customCrf, customVbitrate, customResolution, customFps));
+                          }}
+                          className="w-full rounded-sm border border-[#223029] bg-[#0d1310] px-3 py-2 text-xs font-mono text-white outline-none focus:border-[#00ff9d]"
+                        />
+                        {customTargetMB !== '' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomTargetMB('');
+                              setCustomArgs((current) => updateCustomParameterFlags(current, '', customCrf, customVbitrate, customResolution, customFps));
+                            }}
+                            className="shrink-0 font-tech-mono text-[11px] text-[#ff4757] hover:underline"
+                          >
+                            {t('targetSizeOff')}
+                          </button>
+                        )}
+                      </div>
+                      <span className="mt-1 block font-tech-mono text-[11px] text-[#8a9e95]">
+                        {typeof customTargetMB === 'number' && customTargetMB > 0
+                          ? `Bitrate auto-calculated (~${calculateBitrateForTargetSize(customTargetMB, duration > 0 ? duration : 60) || '?'} Kbps) to fit full duration.`
+                          : t('targetSizeHint')}
+                      </span>
+                    </Field>
+                    {customVbitrate === 'auto' && customTargetMB === '' && (
+                      <div className="sm:col-span-2 rounded-sm border border-[#223029] bg-[#0d1310] p-4">
+                        <div className="mb-2 flex items-center justify-between text-xs">
+                          <span className="font-tech-mono font-bold text-[#00ff9d]">{t('crfQuality')}</span>
+                          <span className="font-mono text-xs text-white">
+                            CRF {customCrf} {customCrf <= 20 ? '(Lossless / High Quality)' : customCrf <= 24 ? '(Balanced / Recommended)' : '(High Compression)'}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="18"
+                          max="32"
+                          step="1"
+                          value={customCrf}
+                          onChange={(event) => {
+                            const val = Number(event.target.value);
+                            setCustomCrf(val);
+                            setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, val, customVbitrate, customResolution, customFps));
+                          }}
+                          className="w-full accent-[#00ff9d]"
+                        />
+                        <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-400">
+                          <span>CRF 18 (Best Quality)</span>
+                          <span>CRF 32 (Smallest Size)</span>
+                        </div>
+                      </div>
+                    )}
+                    <Field label={t('audioCodec')}>
+                      <select
+                        disabled={nativeMode || !customAudioEnabled}
+                        value={customAudioEnabled ? customAcodec : 'none'}
+                        onChange={(event) => updateAudioCodec(event.target.value as PresetSettings['acodec'])}
+                      >
+                        {AUDIO_CODEC_OPTIONS.filter((opt) => getCompatibleAudioCodecs(customFormat).includes(opt.value)).map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={t('audioBitrate')}>
+                      <select
+                        disabled={nativeMode || !customAudioEnabled || customAcodec === 'none'}
+                        value={customAbitrate}
+                        onChange={(event) => {
+                          const ab = event.target.value;
+                          setCustomAbitrate(ab);
+                          setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, customResolution, customFps, ab));
+                        }}
+                      >
+                        {AUDIO_BITRATE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block font-tech-mono text-[11px] text-[#00ff9d]">
+                        {getAudioBitrateRecommendation(customAudioEnabled ? customAcodec : 'none')}
+                      </span>
+                    </Field>
                     <div className="sm:col-span-2"><span className="mb-2 block text-xs text-slate-400">{t('audioTrack')}</span><button disabled={nativeMode} onClick={updateAudioEnabled} className={`flex min-h-11 w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left text-sm disabled:cursor-not-allowed disabled:opacity-55 ${effectiveAudio ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-black/20 text-slate-500'}`}>{effectiveAudio ? t('enabled') : t('videoOnly')}{effectiveAudio ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}</button></div>
                   </div>
-                  {!nativeMode ? <details className="smooth-details rounded-2xl border border-white/10 bg-[#111a30] p-5"><summary className="flex min-h-11 cursor-pointer list-none items-center justify-between text-sm font-medium text-white">{t('advanced')}<ChevronDown className="h-4 w-4 text-slate-500" /></summary><textarea value={customArgs} onChange={(event) => setCustomArgs(event.target.value)} rows={3} className="mt-4 w-full rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs text-slate-200 outline-none focus:border-cyan-300/60" /></details> : null}
-                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="min-h-11 rounded-xl border border-cyan-300/20 px-4 py-3 text-sm text-cyan-100 hover:bg-cyan-300/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-11 rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || ffmpegLoading || !selectedFile || (nativeMode && queue.length > 1)} onClick={nativeMode && nativeSourceUnsupported ? () => void loadFFmpeg() : handleTranscode} className="min-h-11 flex-1 rounded-xl bg-cyan-300 px-5 py-3 text-sm font-semibold text-[#0b1020] disabled:opacity-40">{ffmpegLoading ? t('loadingEngine') : transcoding ? t(conversionStage) : nativeMode && nativeSourceUnsupported ? t('loadExactEngine') : nativeMode ? t('convertToWebm') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
-                  <AnimatePresence>{transcoding && <motion.div {...collapseProps} role="status" aria-live="polite" className="overflow-hidden rounded-xl border border-white/10 bg-[#111a30]"><div className="p-4"><div className="mb-2 flex justify-between text-xs text-slate-400"><span>{t(conversionStage)}</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-white/10"><motion.div className="h-full bg-gradient-to-r from-cyan-300 to-indigo-400" animate={{ width: `${progress}%` }} transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'linear' }} /></div></div></motion.div>}</AnimatePresence>
+                  <div className="terminal-block my-4">
+                    <div className="flex items-center justify-between border-b border-[#223029] pb-2 mb-2 text-xs font-tech-mono text-[#8a9e95]">
+                      <span>COMMAND PREVIEW</span>
+                      <span className="text-[#00ff9d]">FFMPEG.WASM 0.12.6</span>
+                    </div>
+                    <div className="terminal-prompt break-all whitespace-pre-wrap font-mono text-xs text-[#00ff9d]">
+                      ffmpeg -i input.{selectedFile ? selectedFile.name.split('.').pop() || 'mp4' : 'mp4'} {customArgs} output.{customFormat}
+                    </div>
+                  </div>
+                  {!nativeMode ? <details className="smooth-details rounded-sm border border-[#223029] bg-[#121815] p-4"><summary className="flex min-h-10 cursor-pointer list-none items-center justify-between text-xs font-tech-mono text-white">{t('advanced')}<ChevronDown className="h-4 w-4 text-slate-500" /></summary><textarea value={customArgs} onChange={(event) => setCustomArgs(event.target.value)} rows={3} className="mt-3 w-full rounded-sm border border-[#223029] bg-[#060908] p-3 font-mono text-xs text-[#00ff9d] outline-none focus:border-[#00ff9d]/60" /></details> : null}
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row"><button onClick={saveCustomPreset} className="min-h-11 rounded-sm border border-[#00ff9d]/30 px-4 py-3 text-xs font-tech-mono text-[#00ff9d] hover:bg-[#00ff9d]/10">{t('savePreset')}</button><div className="flex gap-2"><button onClick={() => setStep(1)} className="min-h-11 rounded-sm border border-[#223029] px-4 py-3 text-xs font-tech-mono text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('back')}</button><button disabled={transcoding || ffmpegLoading || !selectedFile || (nativeMode && queue.length > 1)} onClick={nativeMode && nativeSourceUnsupported ? () => void loadFFmpeg() : handleTranscode} className="brutal-btn-primary min-h-11 flex-1 px-5 py-3 text-xs font-tech-mono disabled:opacity-40">{ffmpegLoading ? t('loadingEngine') : transcoding ? t(conversionStage) : nativeMode && nativeSourceUnsupported ? t('loadExactEngine') : nativeMode ? t('convertToWebm') : queue.length > 1 ? `${t('startQueue')} (${queue.length})` : t('startTranscode')}<ArrowRight className="ml-2 inline h-4 w-4" /></button></div></div>
+                  <AnimatePresence>{transcoding && <motion.div {...collapseProps} role="status" aria-live="polite" className="overflow-hidden rounded-sm border border-[#00ff9d]/30 bg-[#121815]"><div className="p-4"><div className="mb-2 flex justify-between text-xs font-tech-mono text-slate-400"><span>{t(conversionStage)}</span><span className="text-[#00ff9d]">{progress}%</span></div><div className="h-2 overflow-hidden rounded-sm bg-[#223029]"><motion.div className="h-full bg-[#00ff9d]" animate={{ width: `${progress}%` }} transition={reduceMotion ? { duration: 0 } : { duration: .16, ease: 'linear' }} /></div></div></motion.div>}</AnimatePresence>
                 </section>}
 
                 {step === 3 && <section className="space-y-5">
-                  {outputUrl ? <div className="overflow-hidden rounded-3xl border border-emerald-300/30 bg-emerald-300/5"><div className="flex items-center gap-3 border-b border-emerald-300/20 p-5"><CheckCircle2 className="h-6 w-6 text-emerald-200" /><div><h2 className="font-semibold text-white">{t('complete')}</h2><p className="text-xs text-slate-400">{outputName} · {outputSize} {elapsed ? `· ${elapsed}s ${t('elapsed')}` : ''}</p></div></div><div className="aspect-video bg-black"><video src={outputUrl} controls autoPlay className="h-full w-full object-contain" /></div><a href={outputUrl} download={outputName} className="m-5 block rounded-xl bg-emerald-300 px-4 py-3 text-center text-sm font-semibold text-[#0b1020]"><Download className="mr-2 inline h-4 w-4" />{t('download')}</a></div> : <div className="rounded-3xl border border-dashed border-white/10 bg-[#111a30] p-12 text-center text-sm text-slate-500">{t('emptyOutput')}</div>}
-                  {conversionHistory.length > 0 && <div className="rounded-2xl border border-white/10 bg-[#111a30] p-4"><div className="flex items-center justify-between gap-3"><button onClick={() => setShowConversionHistory((value) => !value)} aria-expanded={showConversionHistory} className="flex items-center gap-2 text-sm font-semibold text-white"><History className="h-4 w-4 text-cyan-200" />{t('conversionHistory')} ({conversionHistory.length})<ChevronDown className={`h-4 w-4 text-slate-500 transition ${showConversionHistory ? 'rotate-180' : ''}`} /></button>{showConversionHistory && <button onClick={() => { conversionHistoryRef.current = []; setConversionHistory([]); writeConversionHistory([]); localStorage.removeItem(CONVERSION_HISTORY_STORAGE_KEY); }} className="text-xs text-slate-400 hover:text-rose-200">{t('clearHistory')}</button>}</div>{showConversionHistory && <div className="mt-3 space-y-2">{conversionHistory.slice(0, 12).map((item) => <div key={item.id} className="flex items-center gap-3 rounded-xl border border-white/5 bg-black/15 p-3"><div className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${item.status === 'completed' ? 'bg-emerald-300/10 text-emerald-200' : 'bg-rose-300/10 text-rose-200'}`}>{item.status === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-medium text-white">{item.fileName}</div><div className="truncate text-[11px] text-slate-500">{item.status === 'failed' ? item.error : `${item.outputName} · ${item.outputSize}`} · {item.engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')}</div></div><button onClick={() => { selectPreset(item.preset); setStep(2); setToast(t('historyPresetLoaded')); }} className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1.5 text-[11px] text-cyan-100 hover:bg-cyan-300/10">{t('reusePreset')}</button></div>)}</div>}</div>}
-                  <button onClick={() => setStep(0)} className="rounded-xl border border-white/10 px-4 py-3 text-sm text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('importStep')}</button></section>}
+                  {outputUrl ? <div className="overflow-hidden rounded-sm border border-[#00ff9d]/30 bg-[#121815]"><div className="flex items-center gap-3 border-b border-[#223029] p-5"><CheckCircle2 className="h-6 w-6 text-[#00ff9d]" /><div><h2 className="font-tech-mono font-bold text-white">{t('complete')}</h2><p className="text-xs font-tech-mono text-slate-400">{outputName} · {outputSize} {elapsed ? `· ${elapsed}s ${t('elapsed')}` : ''}</p></div></div><div className="aspect-video bg-black"><video src={outputUrl} controls autoPlay className="h-full w-full object-contain" /></div><a href={outputUrl} download={outputName} className="m-5 block brutal-btn-primary rounded-sm px-4 py-3 text-center text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d]"><Download className="mr-2 inline h-4 w-4" />{t('download')}</a></div> : <div className="rounded-sm border border-dashed border-[#223029] bg-[#121815] p-12 text-center text-xs font-tech-mono text-slate-500">{t('emptyOutput')}</div>}
+                  {conversionHistory.length > 0 && <div className="rounded-sm border border-[#223029] bg-[#121815] p-4"><div className="flex items-center justify-between gap-3"><button onClick={() => setShowConversionHistory((value) => !value)} aria-expanded={showConversionHistory} className="flex items-center gap-2 text-xs font-tech-mono font-bold text-white"><History className="h-4 w-4 text-[#00ff9d]" />{t('conversionHistory')} ({conversionHistory.length})<ChevronDown className={`h-4 w-4 text-slate-500 transition ${showConversionHistory ? 'rotate-180' : ''}`} /></button>{showConversionHistory && <button onClick={() => { conversionHistoryRef.current = []; setConversionHistory([]); writeConversionHistory([]); localStorage.removeItem(CONVERSION_HISTORY_STORAGE_KEY); }} className="text-xs font-tech-mono text-slate-400 hover:text-rose-300">{t('clearHistory')}</button>}</div>{showConversionHistory && <div className="mt-3 space-y-2 font-tech-mono">{conversionHistory.slice(0, 12).map((item) => <div key={item.id} className="flex items-center gap-3 rounded-sm border border-[#223029] bg-[#060908] p-3"><div className={`grid h-7 w-7 shrink-0 place-items-center rounded-sm ${item.status === 'completed' ? 'bg-[#00ff9d]/10 text-[#00ff9d]' : 'bg-rose-300/10 text-rose-300'}`}>{item.status === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-bold text-white">{item.fileName}</div><div className="truncate text-[11px] text-slate-500">{item.status === 'failed' ? item.error : `${item.outputName} · ${item.outputSize}`} · {item.engine === 'ffmpeg' ? t('ffmpegEngine') : t('nativeEngine')}</div></div><button onClick={() => { selectPreset(item.preset); setStep(2); setToast(t('historyPresetLoaded')); }} className="shrink-0 rounded-sm border border-[#00ff9d]/30 px-2.5 py-1.5 text-[11px] font-tech-mono text-[#00ff9d] hover:bg-[#00ff9d]/10">{t('reusePreset')}</button></div>)}</div>}</div>}
+                  <button onClick={() => setStep(0)} className="rounded-sm border border-[#223029] px-4 py-3 text-xs font-tech-mono text-slate-300 hover:bg-white/5"><ArrowLeft className="mr-2 inline h-4 w-4" />{t('importStep')}</button></section>}
             </motion.div>
           </div>
         </section>
 
-        <footer className="status-bar flex flex-col gap-2 rounded-2xl border border-white/10 bg-[#111a30] p-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+        <footer className="status-bar flex flex-col gap-2 rounded-sm border border-[#223029] bg-[#121815] p-3 text-xs font-tech-mono text-slate-400 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`status-dot h-2 w-2 rounded-full ${isOnline ? 'bg-cyan-300' : 'bg-amber-300'}`} />
+            <span className={`status-dot h-2 w-2 rounded-full ${isOnline ? 'bg-[#00ff9d]' : 'bg-amber-300'}`} />
             <span>{isOnline ? t('online') : t('offline')}</span>
             <span aria-hidden="true">·</span>
-            <span className="rounded-full bg-white/5 px-2 py-1">{t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : nativeSourceUnsupported ? t('ffmpegRequired') : t('quickOutput')}</span>
-            <span className="rounded-full bg-white/5 px-2 py-1">AI: {getAIProvider(settings.aiProvider).name}</span>
+            <span className="rounded-sm border border-[#223029] bg-[#060908] px-2 py-1">{t('engine')}: {engine === 'ffmpeg' ? t('ffmpegEngine') : nativeSourceUnsupported ? t('ffmpegRequired') : t('quickOutput')}</span>
+            <span className="rounded-sm border border-[#223029] bg-[#060908] px-2 py-1">AI: {getAIProvider(settings.aiProvider).name}</span>
           </div>
-          <button aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="min-h-11 rounded-lg px-2 text-left hover:bg-white/5 hover:text-slate-200">{t('diagnostics')} <ChevronDown className={`ml-1 inline h-3.5 w-3.5 transition ${showDiagnostics ? 'rotate-180' : ''}`} /></button>
+          <button aria-expanded={showDiagnostics} onClick={() => setShowDiagnostics((value) => !value)} className="min-h-9 rounded-sm px-2 text-left hover:bg-white/5 hover:text-slate-200">{t('diagnostics')} <ChevronDown className={`ml-1 inline h-3.5 w-3.5 transition ${showDiagnostics ? 'rotate-180' : ''}`} /></button>
         </footer>
-        <AnimatePresence initial={false}>{showDiagnostics && <motion.div {...collapseProps} className="mt-3 overflow-hidden rounded-2xl border border-white/10 bg-black/20 font-mono text-[11px] text-slate-500"><div className="p-4"><div className="mb-2 flex justify-between"><span>{logs.length} events</span><button onClick={() => setLogs([])}>{t('clear')}</button></div>{logs.map((item, index) => <div key={`${item}-${index}`} className="border-l border-cyan-300/20 py-0.5 pl-2">{item}</div>)}</div></motion.div>}</AnimatePresence>
+        <AnimatePresence initial={false}>{showDiagnostics && <motion.div {...collapseProps} className="mt-3 overflow-hidden rounded-sm border border-[#223029] bg-[#060908] font-mono text-[11px] text-slate-400"><div className="p-4"><div className="mb-2 flex justify-between"><span>{logs.length} events</span><button onClick={() => setLogs([])}>{t('clear')}</button></div>{logs.map((item, index) => <div key={`${item}-${index}`} className="border-l border-[#00ff9d]/30 py-0.5 pl-2">{item}</div>)}</div></motion.div>}</AnimatePresence>
       </div>
 
       <AnimatePresence>
-        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.16, ease: 'easeOut' } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-white/10 bg-[#111a30] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button aria-label={`${t('close')} ${panel === 'guide' ? t('guide') : t('settingsTitle')}`} onClick={() => setPanel(null)} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
+        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.16, ease: 'easeOut' } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-[#223029] bg-[#121815] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button aria-label={`${t('close')} ${panel === 'guide' ? t('guide') : t('settingsTitle')}`} onClick={() => setPanel(null)} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
-      <AnimatePresence>{updateWorker && <motion.div role="status" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 6 }, transition: { duration: .18, ease: 'easeOut' } })} className="fixed bottom-5 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-2xl border border-indigo-300/30 bg-[#151b32]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:right-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-300/15 text-indigo-200"><Sparkles className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-white">{t('updateAvailable')}</div><p className="mt-1 text-xs leading-5 text-slate-400">{t('updateAvailableBody')}</p><button onClick={applyAppUpdate} disabled={transcoding} className="mt-3 inline-flex items-center rounded-lg bg-indigo-300 px-3 py-2 text-xs font-semibold text-[#0b1020] disabled:opacity-40">{t('updateNow')}</button></div></div></motion.div>}</AnimatePresence>
-      <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-cyan-300/30 bg-[#14213d] px-4 py-3 text-sm text-cyan-100 shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 }, transition: { duration: .14, ease: 'easeOut' } })}>{toast}</motion.div>}</AnimatePresence>
-    </main>
+      <AnimatePresence>{updateWorker && <motion.div role="status" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 6 }, transition: { duration: .18, ease: 'easeOut' } })} className="fixed bottom-5 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-sm border border-[#00ff9d]/40 bg-[#121815]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:right-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-[#00ff9d]/15 text-[#00ff9d]"><Sparkles className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="text-xs font-tech-mono font-bold text-white">{t('updateAvailable')}</div><p className="mt-1 text-xs font-tech-mono leading-5 text-slate-400">{t('updateAvailableBody')}</p><button onClick={applyAppUpdate} disabled={transcoding} className="mt-3 brutal-btn-primary min-h-9 px-3 py-1.5 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">{t('updateNow')}</button></div></div></motion.div>}</AnimatePresence>
+      <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-[#00ff9d]/40 bg-[#121815] px-4 py-3 text-xs font-tech-mono text-[#00ff9d] shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 }, transition: { duration: .14, ease: 'easeOut' } })}>{toast}</motion.div>}</AnimatePresence>
+    </motion.main>
   );
 }
 
@@ -1287,7 +1566,7 @@ function PresetCard({
   return (
     <motion.div
       {...(reduceMotion ? { initial: false } : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: .12, ease: 'easeOut' as const } })}
-      className={`preset-card relative overflow-hidden rounded-2xl border transition ${active ? 'is-active border-cyan-300/70 bg-cyan-300/10' : 'border-white/10 bg-[#111a30] hover:border-white/25'}`}
+      className={`preset-card relative overflow-hidden rounded-sm border transition ${active ? 'is-active border-[#00ff9d] bg-[#00ff9d]/10 text-[#00ff9d]' : 'border-[#223029] bg-[#121815] hover:border-[#00ff9d]/40'}`}
     >
       <button
         type="button"

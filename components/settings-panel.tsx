@@ -94,7 +94,7 @@ export function SettingsPanel({
 
   return (
     <div className="space-y-6">
-      <nav aria-label={t('settingsTitle')} className="settings-tabs grid grid-cols-2 gap-1 rounded-2xl border border-white/10 bg-black/15 p-1 sm:grid-cols-4">
+      <nav aria-label={t('settingsTitle')} className="settings-tabs grid grid-cols-2 gap-1 rounded-sm border border-[#223029] bg-[#0d1310] p-1 sm:grid-cols-4">
         {([
           ['general', t('general')],
           ['processing', t('processingSettings')],
@@ -106,7 +106,7 @@ export function SettingsPanel({
             type="button"
             aria-current={section === id ? 'page' : undefined}
             onClick={() => setSection(id)}
-            className={`min-h-11 rounded-xl px-2 py-2 text-xs font-semibold transition ${section === id ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400 hover:bg-white/5 hover:text-white'}`}
+            className={`min-h-10 rounded-sm px-2 py-2 text-xs font-tech-mono font-bold transition ${section === id ? 'bg-[#00ff9d] text-[#0a0e0c]' : 'text-[#8a9e95] hover:bg-white/5 hover:text-white'}`}
           >
             {label}
           </button>
@@ -123,7 +123,7 @@ export function SettingsPanel({
                 <button
                   key={locale}
                   onClick={() => onUpdate({ locale })}
-                  className={`min-h-11 min-w-11 rounded-md px-2.5 py-1 text-xs font-semibold ${settings.locale === locale ? 'bg-cyan-300 text-[#0b1020]' : 'text-slate-400'}`}
+                  className={`min-h-9 min-w-9 rounded-sm px-2.5 py-1 text-xs font-tech-mono font-bold ${settings.locale === locale ? 'bg-[#00ff9d] text-[#0a0e0c]' : 'text-[#8a9e95]'}`}
                 >
                   {locale.toUpperCase()}
                 </button>
@@ -246,7 +246,7 @@ export function SettingsPanel({
           />
           <div className="flex items-center justify-between gap-4">
             <span className="text-sm text-slate-300">{t('loadFfmpeg')}</span>
-            <button disabled={ffmpegLoading || Boolean(ffmpeg)} onClick={onLoad} className="rounded-lg bg-cyan-300 px-3 py-2 text-xs font-semibold text-[#0b1020] disabled:opacity-40">
+            <button disabled={ffmpegLoading || Boolean(ffmpeg)} onClick={onLoad} className="brutal-btn-primary min-h-9 rounded-sm px-3 py-2 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">
               {ffmpeg ? t('compilerLoaded') : ffmpegLoading ? t('processing') : t('loadFfmpegButton')}
             </button>
           </div>
