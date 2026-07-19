@@ -17,8 +17,11 @@ interface SettingsPanelProps {
   ffmpeg: unknown;
   ffmpegLoading: boolean;
   ffmpegError: string;
+  ffmpegHeavy?: unknown;
+  ffmpegHeavyLoading?: boolean;
   onUpdate: (patch: Partial<AppSettings>) => void;
   onLoad: () => void;
+  onLoadHeavy?: () => void;
   onClearPresets: () => void;
   onToast: (message: string) => void;
 }
@@ -29,8 +32,11 @@ export function SettingsPanel({
   ffmpeg,
   ffmpegLoading,
   ffmpegError,
+  ffmpegHeavy,
+  ffmpegHeavyLoading,
   onUpdate,
   onLoad,
+  onLoadHeavy,
   onClearPresets,
   onToast,
 }: SettingsPanelProps) {
@@ -237,19 +243,42 @@ export function SettingsPanel({
 
       {section === 'processing' && <section>
         <SectionTitle>{t('processingSettings')}</SectionTitle>
-        <div className="space-y-3 rounded-2xl border border-white/10 bg-black/15 p-4">
+        <div className="space-y-4 rounded-2xl border border-white/10 bg-black/15 p-4">
           <SettingSelect
             label={t('defaultEngine')}
             value={settings.defaultEngine}
             options={[['native', t('nativeEngine')], ['ffmpeg', t('ffmpegEngine')]]}
             onChange={(value) => onUpdate({ defaultEngine: value as AppSettings['defaultEngine'] })}
           />
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-sm text-slate-300">{t('loadFfmpeg')}</span>
-            <button disabled={ffmpegLoading || Boolean(ffmpeg)} onClick={onLoad} className="brutal-btn-primary min-h-9 rounded-sm px-3 py-2 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">
-              {ffmpeg ? t('compilerLoaded') : ffmpegLoading ? t('processing') : t('loadFfmpegButton')}
-            </button>
+          <SettingSelect
+            label={t('engineBuild')}
+            value={settings.ffmpegBuild || 'standard'}
+            options={[['standard', t('standardEngine')], ['heavy', `${t('heavyEngine')} (~33 MB)`]]}
+            onChange={(value) => onUpdate({ ffmpegBuild: value as AppSettings['ffmpegBuild'] })}
+          />
+
+          <div className="border-t border-white/10 pt-3 space-y-3">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm font-semibold text-white">{t('standardEngine')}</div>
+                <div className="text-xs text-slate-400">~25 MB · H.264 & VP9</div>
+              </div>
+              <button disabled={ffmpegLoading || Boolean(ffmpeg)} onClick={onLoad} className="brutal-btn-primary min-h-9 rounded-sm px-3 py-2 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">
+                {ffmpeg ? t('compilerLoaded') : ffmpegLoading ? t('processing') : t('loadFfmpegButton')}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-white/5 pt-3">
+              <div>
+                <div className="text-sm font-semibold text-cyan-300">{t('heavyEngine')}</div>
+                <div className="text-xs text-slate-400">{t('heavyEngineDesc')}</div>
+              </div>
+              <button disabled={ffmpegHeavyLoading || Boolean(ffmpegHeavy)} onClick={onLoadHeavy} className="brutal-btn-primary min-h-9 rounded-sm px-3 py-2 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-cyan-300 disabled:opacity-40 shrink-0">
+                {ffmpegHeavy ? t('compilerLoaded') : ffmpegHeavyLoading ? t('processing') : t('loadHeavyEngine')}
+              </button>
+            </div>
           </div>
+
           {ffmpegError && <p className="text-xs text-rose-300">{ffmpegError}</p>}
         </div>
       </section>}

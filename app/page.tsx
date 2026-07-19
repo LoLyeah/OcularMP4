@@ -201,6 +201,8 @@ export default function PresetStudio() {
   const [ffmpeg, setFfmpeg] = useState<any>(null);
   const [ffmpegLoading, setFfmpegLoading] = useState(false);
   const [ffmpegError, setFfmpegError] = useState('');
+  const [ffmpegHeavy, setFfmpegHeavy] = useState<any>(null);
+  const [ffmpegHeavyLoading, setFfmpegHeavyLoading] = useState(false);
   const [engine, setEngine] = useState<'native' | 'ffmpeg'>('native');
   const [transcoding, setTranscoding] = useState(false);
   const [conversionStage, setConversionStage] = useState<'preparing' | 'loadingEngine' | 'encoding' | 'finalizing'>('preparing');
@@ -735,6 +737,36 @@ export default function PresetStudio() {
     }
   };
 
+  const loadFFmpegHeavy = async () => {
+    if (ffmpegHeavy) return ffmpegHeavy;
+    setFfmpegHeavyLoading(true);
+    setFfmpegError('');
+    log('Loading Full Codec FFmpeg.wasm compiler from CDN (~33 MB)…');
+    try {
+      const [{ FFmpeg }, { toBlobURL }] = await Promise.all([import('@ffmpeg/ffmpeg'), import('@ffmpeg/util')]);
+      const instance = new FFmpeg();
+      instance.on('progress', ({ progress: value }: { progress: number }) => setProgress(Math.min(99, Math.round(value * 100))));
+      const base = 'https://unpkg.com/@ffmpeg/core-mt@0.12.9/dist/esm';
+      await instance.load({
+        coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, 'application/wasm'),
+        workerURL: await toBlobURL(`${base}/ffmpeg-core.worker.js`, 'text/javascript'),
+      });
+      setFfmpegHeavy(instance);
+      setEngine('ffmpeg');
+      setConversionStage('preparing');
+      log('Full Codec FFmpeg.wasm compiler loaded.');
+      setToast(t('heavyEngineLoaded'));
+      return instance;
+    } catch (error: any) {
+      setFfmpegError(error?.message || 'Unable to load Full Codec FFmpeg.');
+      log(`Heavy FFmpeg error: ${error?.message || 'unknown error'}`);
+      return null;
+    } finally {
+      setFfmpegHeavyLoading(false);
+    }
+  };
+
   const generatePreset = async () => {
     if (!aiPrompt.trim()) return;
     const provider = getAIProvider(settings.aiProvider);
@@ -823,8 +855,12 @@ export default function PresetStudio() {
     try {
       setConversionStage('preparing');
       if (engine === 'ffmpeg') {
-        let activeFfmpeg = ffmpeg;
+        const requiresHeavy = jobSettings.vcodec === 'av1' || jobSettings.vcodec === 'hevc' || settings.ffmpegBuild === 'heavy';
+        let activeFfmpeg = requiresHeavy ? (ffmpegHeavy || ffmpeg) : (ffmpeg || ffmpegHeavy);
         if (!activeFfmpeg) {
+          activeFfmpeg = requiresHeavy ? await loadFFmpegHeavy() : await loadFFmpeg();
+        }
+        if (!activeFfmpeg && requiresHeavy) {
           activeFfmpeg = await loadFFmpeg();
         }
         if (!activeFfmpeg) throw new Error('FFmpeg compiler could not be loaded.');
@@ -1392,14 +1428,30 @@ export default function PresetStudio() {
                         value={customVcodec}
                         onChange={(event) => updateVideoCodec(event.target.value as PresetSettings['vcodec'])}
                       >
-                        {VIDEO_CODEC_OPTIONS.filter((opt) => getCompatibleVideoCodecs(customFormat, engine).includes(opt.value)).map((option) => (
+                        {VIDEO_CODEC_OPTIONS.filter((opt) => getCompatibleVideoCodecs(customFormat, engine, (ffmpegHeavy || settings.ffmpegBuild === 'heavy') ? 'heavy' : 'standard').includes(opt.value)).map((option) => (
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
                       {engine === 'ffmpeg' && (customVcodec === 'av1' || customVcodec === 'hevc') && (
-                        <span className="mt-1 block font-tech-mono text-[11px] text-amber-300">
-                          Note: Standard FFmpeg.wasm includes H.264 & VP9 encoders. Output automatically encodes as H.264 for MP4 compatibility.
-                        </span>
+                        ffmpegHeavy ? (
+                          <span className="mt-1 block font-tech-mono text-[11px] text-cyan-300">
+                            ✓ Full Codec Engine active — true {customVcodec.toUpperCase()} encoding enabled.
+                          </span>
+                        ) : (
+                          <div className="mt-2 rounded-sm border border-cyan-300/30 bg-cyan-300/5 p-2.5 font-tech-mono text-[11px]">
+                            <span className="text-cyan-300 block mb-1">
+                              {customVcodec.toUpperCase()} requires Full Codec Engine (~33 MB). Standard build falls back to H.264.
+                            </span>
+                            <button
+                              type="button"
+                              disabled={ffmpegHeavyLoading}
+                              onClick={() => void loadFFmpegHeavy()}
+                              className="brutal-btn-primary mt-1 px-2.5 py-1 text-[10px] font-bold text-[#0a0e0c] bg-cyan-300 disabled:opacity-40"
+                            >
+                              {ffmpegHeavyLoading ? t('processing') : t('loadHeavyEngine')}
+                            </button>
+                          </div>
+                        )
                       )}
                     </Field>
                     <Field label={t('resolution')}><select value={customResolution} onChange={(event) => { const res = event.target.value as PresetSettings['resolution']; setCustomResolution(res); setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, res, customFps)); }}>{RESOLUTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
@@ -1596,7 +1648,7 @@ export default function PresetStudio() {
       </div>
 
       <AnimatePresence>
-        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.16, ease: 'easeOut' } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-[#223029] bg-[#121815] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button aria-label={`${t('close')} ${panel === 'guide' ? t('guide') : t('settingsTitle')}`} onClick={() => setPanel(null)} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} onUpdate={updateSettings} onLoad={loadFFmpeg} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
+        {panel && <><motion.button aria-label={t('close')} className="fixed inset-0 z-30 bg-black/65 backdrop-blur-md" onClick={() => setPanel(null)} {...(reduceMotion ? {} : { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.16, ease: 'easeOut' } })} /><motion.aside ref={dialogRef} role="dialog" aria-modal="true" aria-label={panel === 'guide' ? t('guide') : t('settingsTitle')} className="dialog-panel fixed right-0 top-0 z-40 h-full w-full max-w-md overflow-y-auto border-l border-[#223029] bg-[#121815] p-5 shadow-2xl shadow-black/40 sm:p-7" {...(reduceMotion ? {} : { initial: { x: '100%' }, animate: { x: 0 }, exit: { x: '100%' }, transition: { duration: .22, ease: [0.22, 1, 0.36, 1] } })}><div className="mb-8 flex items-center justify-between"><h2 className="text-xl font-semibold tracking-tight text-white">{panel === 'guide' ? t('guide') : t('settingsTitle')}</h2><button aria-label={`${t('close')} ${panel === 'guide' ? t('guide') : t('settingsTitle')}`} onClick={() => setPanel(null)} className="grid min-h-11 min-w-11 place-items-center rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-5 w-5" /></button></div>{panel === 'guide' ? <Guide t={t} /> : <SettingsPanel t={t} settings={settings} ffmpeg={ffmpeg} ffmpegLoading={ffmpegLoading} ffmpegError={ffmpegError} ffmpegHeavy={ffmpegHeavy} ffmpegHeavyLoading={ffmpegHeavyLoading} onUpdate={updateSettings} onLoad={loadFFmpeg} onLoadHeavy={loadFFmpegHeavy} onToast={setToast} onClearPresets={() => { localStorage.removeItem(PRESETS_STORAGE_KEY); localStorage.removeItem('ocularmp4.presets.v1'); setPresets(DEFAULT_PRESETS); setToast(t('clearPresets')); }} />}</motion.aside></>}
       </AnimatePresence>
       <AnimatePresence>{updateWorker && <motion.div role="status" {...(reduceMotion ? { initial: false } : { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 6 }, transition: { duration: .18, ease: 'easeOut' } })} className="fixed bottom-5 right-4 z-50 w-[calc(100%-2rem)] max-w-sm rounded-sm border border-[#00ff9d]/40 bg-[#121815]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl sm:right-5"><div className="flex items-start gap-3"><div className="grid h-9 w-9 shrink-0 place-items-center rounded-sm bg-[#00ff9d]/15 text-[#00ff9d]"><Sparkles className="h-4 w-4" /></div><div className="min-w-0 flex-1"><div className="text-xs font-tech-mono font-bold text-white">{t('updateAvailable')}</div><p className="mt-1 text-xs font-tech-mono leading-5 text-slate-400">{t('updateAvailableBody')}</p><button onClick={applyAppUpdate} disabled={transcoding} className="mt-3 brutal-btn-primary min-h-9 px-3 py-1.5 text-xs font-tech-mono font-bold text-[#0a0e0c] bg-[#00ff9d] disabled:opacity-40">{t('updateNow')}</button></div></div></motion.div>}</AnimatePresence>
       <AnimatePresence>{toast && <motion.div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-sm border border-[#00ff9d]/40 bg-[#121815] px-4 py-3 text-xs font-tech-mono text-[#00ff9d] shadow-xl" {...(reduceMotion ? {} : { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 }, transition: { duration: .14, ease: 'easeOut' } })}>{toast}</motion.div>}</AnimatePresence>

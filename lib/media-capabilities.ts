@@ -85,10 +85,20 @@ export function getCompatibleAudioCodecs(format: OutputFormat): AudioCodec[] {
   return ['aac', 'opus', 'mp3', 'none'];
 }
 
-export function getCompatibleVideoCodecs(format: OutputFormat, engine: 'ffmpeg' | 'native' = 'ffmpeg'): VideoCodec[] {
+export function getCompatibleVideoCodecs(
+  format: OutputFormat,
+  engine: 'ffmpeg' | 'native' = 'ffmpeg',
+  build: 'standard' | 'heavy' = 'standard'
+): VideoCodec[] {
   if (engine === 'ffmpeg') {
-    // Standard @ffmpeg/core WASM UMD binary compiles libx264, libvpx-vp9, and gif.
-    // libx265 (HEVC) and libaom-av1 (AV1) are omitted in standard WASM builds.
+    if (build === 'heavy') {
+      if (format === 'webm') return ['vp9', 'av1', 'none'];
+      if (format === 'mp4') return ['h264', 'hevc', 'av1', 'none'];
+      if (format === 'gif') return ['gif'];
+      if (format === 'mp3' || format === 'aac') return ['none'];
+      return ['h264', 'vp9', 'hevc', 'av1', 'gif', 'none'];
+    }
+    // Standard @ffmpeg/core WASM binary compiles libx264, libvpx-vp9, and gif.
     if (format === 'webm') return ['vp9', 'none'];
     if (format === 'mp4') return ['h264', 'none'];
     if (format === 'gif') return ['gif'];
@@ -106,9 +116,10 @@ export function sanitizeCodecSettings(
   format: OutputFormat,
   vcodec: VideoCodec,
   acodec: AudioCodec,
-  engine: 'ffmpeg' | 'native' = 'ffmpeg'
+  engine: 'ffmpeg' | 'native' = 'ffmpeg',
+  build: 'standard' | 'heavy' = 'standard'
 ): { vcodec: VideoCodec; acodec: AudioCodec } {
-  const validV = getCompatibleVideoCodecs(format, engine);
+  const validV = getCompatibleVideoCodecs(format, engine, build);
   const validA = getCompatibleAudioCodecs(format);
   return {
     vcodec: validV.includes(vcodec) ? vcodec : validV[0],

@@ -6,6 +6,7 @@ import {
   AUDIO_CODECS,
   OUTPUT_FORMATS,
   VIDEO_CODECS,
+  getCompatibleVideoCodecs,
   resolveFfmpegCodecArgs,
 } from '../lib/media-capabilities.ts';
 
@@ -16,6 +17,13 @@ test('shared capability lists include every advertised codec and format', () => 
   assert.deepEqual(PRESET_JSON_SCHEMA.properties.settings.properties.vcodec.enum, VIDEO_CODECS);
   assert.deepEqual(PRESET_JSON_SCHEMA.properties.settings.properties.acodec.enum, AUDIO_CODECS);
   assert.deepEqual(PRESET_JSON_SCHEMA.properties.settings.properties.format.enum, OUTPUT_FORMATS);
+});
+
+test('getCompatibleVideoCodecs filters codecs based on standard vs heavy build', () => {
+  assert.deepEqual(getCompatibleVideoCodecs('mp4', 'ffmpeg', 'standard'), ['h264', 'none']);
+  assert.deepEqual(getCompatibleVideoCodecs('mp4', 'ffmpeg', 'heavy'), ['h264', 'hevc', 'av1', 'none']);
+  assert.deepEqual(getCompatibleVideoCodecs('webm', 'ffmpeg', 'standard'), ['vp9', 'none']);
+  assert.deepEqual(getCompatibleVideoCodecs('webm', 'ffmpeg', 'heavy'), ['vp9', 'av1', 'none']);
 });
 
 test('manual codec choices replace stale encoder arguments and map WASM fallbacks', () => {

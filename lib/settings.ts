@@ -16,6 +16,7 @@ export interface AppSettings {
   theme: Theme;
   motion: MotionPreference;
   defaultEngine: 'native' | 'ffmpeg';
+  ffmpegBuild: 'standard' | 'heavy';
   advancedMode: boolean;
   aiProvider: AIProvider;
   aiModel: string;
@@ -29,6 +30,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   motion: 'system',
   defaultEngine: 'native',
+  ffmpegBuild: 'standard',
   advancedMode: false,
   aiProvider: 'openai',
   aiModel: getAIProvider('openai').defaultModel,
