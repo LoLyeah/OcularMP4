@@ -31,6 +31,8 @@ test('manual codec choices replace stale encoder arguments and map WASM fallback
     'libvpx-vp9',
     '-b:v',
     '0',
+    '-cpu-used',
+    '2',
     '-row-mt',
     '1',
     '-c:a',

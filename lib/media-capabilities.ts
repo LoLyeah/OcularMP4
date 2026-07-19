@@ -57,6 +57,14 @@ export const AUDIO_BITRATE_OPTIONS = [
   { value: '320k', label: '320 Kbps (Maximum Quality)' },
 ] as const;
 
+export const ENCODE_SPEED_OPTIONS = [
+  { value: 'ultrafast', label: 'Ultrafast (Fastest / Low CPU)', preset: 'ultrafast', cpuUsed: '5' },
+  { value: 'veryfast', label: 'Veryfast (Faster)', preset: 'veryfast', cpuUsed: '4' },
+  { value: 'medium', label: 'Medium (Balanced / Recommended)', preset: 'medium', cpuUsed: '2' },
+  { value: 'slow', label: 'Slow (High Efficiency)', preset: 'slow', cpuUsed: '1' },
+  { value: 'veryslow', label: 'Veryslow (Max Compression)', preset: 'veryslow', cpuUsed: '0' },
+] as const;
+
 export const OUTPUT_FORMATS = OUTPUT_FORMAT_OPTIONS.map(({ value }) => value);
 export const VIDEO_CODECS = VIDEO_CODEC_OPTIONS.map(({ value }) => value);
 export const AUDIO_CODECS = AUDIO_CODEC_OPTIONS.map(({ value }) => value);
@@ -66,6 +74,7 @@ export type OutputFormat = (typeof OUTPUT_FORMAT_OPTIONS)[number]['value'];
 export type VideoCodec = (typeof VIDEO_CODEC_OPTIONS)[number]['value'];
 export type AudioCodec = (typeof AUDIO_CODEC_OPTIONS)[number]['value'];
 export type Resolution = (typeof RESOLUTION_OPTIONS)[number]['value'];
+export type EncodeSpeed = (typeof ENCODE_SPEED_OPTIONS)[number]['value'];
 
 export function getCompatibleAudioCodecs(format: OutputFormat): AudioCodec[] {
   if (format === 'mp4') return ['aac', 'mp3', 'none'];
@@ -76,7 +85,16 @@ export function getCompatibleAudioCodecs(format: OutputFormat): AudioCodec[] {
   return ['aac', 'opus', 'mp3', 'none'];
 }
 
-export function getCompatibleVideoCodecs(format: OutputFormat): VideoCodec[] {
+export function getCompatibleVideoCodecs(format: OutputFormat, engine: 'ffmpeg' | 'native' = 'ffmpeg'): VideoCodec[] {
+  if (engine === 'ffmpeg') {
+    // Standard @ffmpeg/core WASM UMD binary compiles libx264, libvpx-vp9, and gif.
+    // libx265 (HEVC) and libaom-av1 (AV1) are omitted in standard WASM builds.
+    if (format === 'webm') return ['vp9', 'none'];
+    if (format === 'mp4') return ['h264', 'none'];
+    if (format === 'gif') return ['gif'];
+    if (format === 'mp3' || format === 'aac') return ['none'];
+    return ['h264', 'vp9', 'gif', 'none'];
+  }
   if (format === 'webm') return ['vp9', 'av1', 'none'];
   if (format === 'mp4') return ['h264', 'hevc', 'av1', 'none'];
   if (format === 'gif') return ['gif'];
@@ -87,9 +105,10 @@ export function getCompatibleVideoCodecs(format: OutputFormat): VideoCodec[] {
 export function sanitizeCodecSettings(
   format: OutputFormat,
   vcodec: VideoCodec,
-  acodec: AudioCodec
+  acodec: AudioCodec,
+  engine: 'ffmpeg' | 'native' = 'ffmpeg'
 ): { vcodec: VideoCodec; acodec: AudioCodec } {
-  const validV = getCompatibleVideoCodecs(format);
+  const validV = getCompatibleVideoCodecs(format, engine);
   const validA = getCompatibleAudioCodecs(format);
   return {
     vcodec: validV.includes(vcodec) ? vcodec : validV[0],
@@ -144,6 +163,7 @@ interface ManagedEncodingSettings {
   vcodec: VideoCodec;
   acodec: AudioCodec;
   audioEnabled: boolean;
+  encodeSpeed?: EncodeSpeed;
 }
 
 const VIDEO_FLAGS = new Set(['-c:v', '-codec:v', '-vcodec']);
@@ -166,8 +186,9 @@ export function resolveFfmpegCodecArgs(settings: ManagedEncodingSettings, args: 
   let vcodec = settings.vcodec;
   let acodec = settings.acodec;
   const format = settings.format || 'mp4';
+  const speedOpt = ENCODE_SPEED_OPTIONS.find(({ value }) => value === settings.encodeSpeed) || ENCODE_SPEED_OPTIONS[2];
 
-  const sanitized = sanitizeCodecSettings(format, vcodec, acodec);
+  const sanitized = sanitizeCodecSettings(format, vcodec, acodec, 'ffmpeg');
   vcodec = sanitized.vcodec;
   acodec = sanitized.acodec;
 
@@ -189,9 +210,9 @@ export function resolveFfmpegCodecArgs(settings: ManagedEncodingSettings, args: 
   if (encoderName) {
     resolved.push('-c:v', encoderName);
     if (encoderName === 'libx264') {
-      resolved.push('-preset', 'medium');
+      resolved.push('-preset', speedOpt.preset);
     } else if (encoderName === 'libvpx-vp9') {
-      resolved.push('-b:v', '0', '-row-mt', '1');
+      resolved.push('-b:v', '0', '-cpu-used', speedOpt.cpuUsed, '-row-mt', '1');
     }
   } else {
     resolved.push('-vn');

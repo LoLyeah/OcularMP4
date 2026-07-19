@@ -27,6 +27,7 @@ import {
 import {
   AUDIO_BITRATE_OPTIONS,
   AUDIO_CODEC_OPTIONS,
+  ENCODE_SPEED_OPTIONS,
   FRAME_RATE_OPTIONS,
   OUTPUT_FORMAT_OPTIONS,
   RESOLUTION_OPTIONS,
@@ -39,6 +40,7 @@ import {
   getVideoBitrateRecommendation,
   resolveFfmpegCodecArgs,
   sanitizeCodecSettings,
+  type EncodeSpeed,
   type Resolution,
 } from '../lib/media-capabilities';
 
@@ -233,6 +235,7 @@ export default function PresetStudio() {
   const [customVcodec, setCustomVcodec] = useState<PresetSettings['vcodec']>(activePreset.settings.vcodec);
   const [customAcodec, setCustomAcodec] = useState<PresetSettings['acodec']>(activePreset.settings.acodec);
   const [customAbitrate, setCustomAbitrate] = useState<string>(activePreset.settings.abitrate || 'auto');
+  const [customSpeed, setCustomSpeed] = useState<EncodeSpeed>('medium');
   const [customResolution, setCustomResolution] = useState<PresetSettings['resolution']>(activePreset.settings.resolution);
   const [customFps, setCustomFps] = useState(activePreset.settings.fps);
   const [customVbitrate, setCustomVbitrate] = useState(activePreset.settings.vbitrate);
@@ -248,12 +251,13 @@ export default function PresetStudio() {
     vbitrate: string,
     resolution: Resolution,
     fps: number,
-    abitrate: string = customAbitrate
+    abitrate: string = customAbitrate,
+    speed: EncodeSpeed = customSpeed
   ): string => {
     let args = baseArgsString.split(/\s+/).filter(Boolean);
     const cleaned: string[] = [];
     for (let i = 0; i < args.length; i++) {
-      if (args[i] === '-fs' || args[i] === '-crf' || args[i] === '-r' || args[i] === '-b:v' || args[i] === '-vf' || args[i] === '-b:a') {
+      if (args[i] === '-fs' || args[i] === '-crf' || args[i] === '-r' || args[i] === '-b:v' || args[i] === '-vf' || args[i] === '-b:a' || args[i] === '-preset' || args[i] === '-cpu-used') {
         i++;
         continue;
       }
@@ -284,6 +288,13 @@ export default function PresetStudio() {
       args.push('-b:v', vbitrate);
     } else {
       args.push('-crf', String(crf));
+    }
+
+    const speedOpt = ENCODE_SPEED_OPTIONS.find(({ value }) => value === speed) || ENCODE_SPEED_OPTIONS[2];
+    if (customVcodec === 'vp9') {
+      args.push('-cpu-used', speedOpt.cpuUsed);
+    } else {
+      args.push('-preset', speedOpt.preset);
     }
 
     if (abitrate && abitrate !== 'auto' && abitrate !== 'none') {
@@ -1350,7 +1361,7 @@ export default function PresetStudio() {
                         value={nativeMode && !nativeSourceUnsupported ? 'webm' : customFormat}
                         onChange={(event) => {
                           const nextFormat = event.target.value as PresetSettings['format'];
-                          const sanitized = sanitizeCodecSettings(nextFormat, customVcodec, customAcodec);
+                          const sanitized = sanitizeCodecSettings(nextFormat, customVcodec, customAcodec, engine);
                           setCustomFormat(nextFormat);
                           setCustomVcodec(sanitized.vcodec);
                           setCustomAcodec(sanitized.acodec);
@@ -1371,10 +1382,15 @@ export default function PresetStudio() {
                         value={nativeMode && !nativeSourceUnsupported ? 'vp9' : customVcodec}
                         onChange={(event) => updateVideoCodec(event.target.value as PresetSettings['vcodec'])}
                       >
-                        {VIDEO_CODEC_OPTIONS.filter((opt) => getCompatibleVideoCodecs(customFormat).includes(opt.value)).map((option) => (
+                        {VIDEO_CODEC_OPTIONS.filter((opt) => getCompatibleVideoCodecs(customFormat, engine).includes(opt.value)).map((option) => (
                           <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
+                      {engine === 'ffmpeg' && (customVcodec === 'av1' || customVcodec === 'hevc') && (
+                        <span className="mt-1 block font-tech-mono text-[11px] text-amber-300">
+                          Note: Standard FFmpeg.wasm includes H.264 & VP9 encoders. Output automatically encodes as H.264 for MP4 compatibility.
+                        </span>
+                      )}
                     </Field>
                     <Field label={t('resolution')}><select value={customResolution} onChange={(event) => { const res = event.target.value as PresetSettings['resolution']; setCustomResolution(res); setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, res, customFps)); }}>{RESOLUTION_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>
                     <Field label={t('frameRate')}><select value={customFps} onChange={(event) => { const fps = Number(event.target.value); setCustomFps(fps); setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, customResolution, fps)); }}>{FRAME_RATE_OPTIONS.map((fps) => <option key={fps} value={fps}>{fps === 0 ? t('originalFpsLabel') : `${fps} FPS`}</option>)}</select></Field>
@@ -1458,6 +1474,34 @@ export default function PresetStudio() {
                         <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-400">
                           <span>CRF 18 (Best Quality)</span>
                           <span>CRF 32 (Smallest Size)</span>
+                        </div>
+                      </div>
+                    )}
+                    {!nativeMode && customVbitrate === 'auto' && customTargetMB === '' && (
+                      <div className="sm:col-span-2 rounded-sm border border-[#223029] bg-[#0d1310] p-4">
+                        <div className="mb-2 flex items-center justify-between text-xs font-tech-mono">
+                          <span className="font-bold text-[#00ff9d]">{t('encodeSpeed')}</span>
+                          <span className="font-mono text-xs text-white">
+                            {ENCODE_SPEED_OPTIONS.find((opt) => opt.value === customSpeed)?.label}
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max={ENCODE_SPEED_OPTIONS.length - 1}
+                          step="1"
+                          value={ENCODE_SPEED_OPTIONS.findIndex((opt) => opt.value === customSpeed)}
+                          onChange={(event) => {
+                            const idx = Number(event.target.value);
+                            const spd = ENCODE_SPEED_OPTIONS[idx].value;
+                            setCustomSpeed(spd);
+                            setCustomArgs((current) => updateCustomParameterFlags(current, customTargetMB, customCrf, customVbitrate, customResolution, customFps, customAbitrate, spd));
+                          }}
+                          className="w-full accent-[#00ff9d]"
+                        />
+                        <div className="mt-1 flex justify-between font-mono text-[10px] text-slate-400">
+                          <span>1 (Fastest / Low CPU)</span>
+                          <span>5 (Max Compression)</span>
                         </div>
                       </div>
                     )}
